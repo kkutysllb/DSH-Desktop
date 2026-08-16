@@ -19,6 +19,7 @@
  * @module desktop/main/theme-watcher
  */
 
+import { EventEmitter } from 'node:events'
 import { nativeTheme, type BrowserWindow } from 'electron'
 import { consoleMessageText } from './console-channel'
 import { getSettings, saveSettings } from './store'
@@ -68,10 +69,14 @@ export function currentThemePref(): 'system' | 'light' | 'dark' {
   return getSettings().lastTheme
 }
 
+/** 主题变化事件面（终端面板等跟随原生外观的组件订阅）。 */
+export const themeEvents = new EventEmitter()
+
 /** 应用原生主题：themeSource + 持久化（变化才写盘）。 */
 export function applyNativeTheme(pref: 'system' | 'light' | 'dark'): void {
   nativeTheme.themeSource = pref
   if (getSettings().lastTheme !== pref) saveSettings({ lastTheme: pref })
+  themeEvents.emit('theme-changed', pref)
 }
 
 /**

@@ -51,6 +51,8 @@ desktop/
 │   ├── upstream.ts  # 上游状态检测 + 同步流水线（fetch→ff-only→install→build）
 │   ├── plugins.ts   # 插件桥：profile 层叠清单 + GitHub dsh-plugin 发现 + 安装转发
 │   ├── windows.ts   # shell 窗口（无 preload，纯浏览器）与面板窗口
+│   ├── terminal-panel.ts # 内嵌终端面板（WebContentsView + 布局跟随）
+│   ├── pty-host.ts  # node-pty 会话管理（内嵌终端的真实 shell）
 │   ├── menu.ts / ipc.ts / store.ts
 ├── preload/         # contextBridge 白名单（window.dshDesktop）
 ├── renderer/        # 本地面板（hash 路由，无框架）
@@ -134,6 +136,7 @@ pnpm sync-upstream
 | 标题栏文字 = `document.title`（“会话标题 — 产品名”） | `packages/client/web/src/DocumentTitle.tsx` |
 | 会话行选中态 `[role="treeitem"][aria-selected]` + React fiber `props.node.id`（标题栏终端按钮探当前会话；DOM/URL 均不暴露会话 id） | `packages/client/ui-workspace/src/client/rows/Rows.tsx` |
 | workspace RPC `POST /api/workspace.list`（client-request 信封、`Response.json` 应答，items[].path = 工作区目录、sessionIds 含当前会话即命中） | `packages/host/apiproxy/src/fetch/handler.ts` UNARY_ROUTES + `api/workspace.schema.ts` |
+| 布局列 `[class*="sidebarCol"]` / `[class*="centerCol"]` / `[class*="detailsCol"]`（内嵌终端面板定位与让位 padding 注入；CSS modules 哈希不影响 `[class*=…]`） | `packages/client/ui-layout/src/client/AppFrame.tsx` + `AppFrame.module.css` |
 | Node 版本要求 `engines.node` | 根 `package.json`（不满足时自动回退 Electron 内置 node / 提示） |
 
 ### 仓库卫生

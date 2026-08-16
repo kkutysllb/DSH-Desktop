@@ -14,6 +14,7 @@ import { app, Menu, Tray, nativeImage, shell, type MenuItemConstructorOptions } 
 import { dshManager } from './dsh-manager'
 import { resolveAsset } from './dsh-contract'
 import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
+import { terminalPanel } from './terminal-panel'
 import { getShellWindow, openPanel, showShellWindow } from './windows'
 import { getSettings } from './store'
 import type { UpdateStatus } from '@shared/ipc-contract'
@@ -145,6 +146,16 @@ export function installMenu(): void {
     {
       label: '工具',
       submenu: [
+        {
+          label: '切换内嵌终端',
+          accelerator: 'Control+`',
+          click: () => {
+            const w = getShellWindow()
+            if (w !== null && !w.isDestroyed()) w.show()
+            terminalPanel.toggle()
+          },
+        },
+        { type: 'separator' },
         {
           label: '设置（上游初始化）…',
           click: () => openPanel('setup', '设置 · DSH Desktop'),

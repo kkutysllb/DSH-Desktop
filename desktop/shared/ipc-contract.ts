@@ -127,6 +127,28 @@ export interface UpdateStatus {
   error: string | null
 }
 
+/* ---------- 内嵌终端 ---------- */
+
+/** 终端面板/pty 的主题 token（上游 bg-base/sidebar-fill 系）。 */
+export interface TerminalTheme {
+  dark: boolean
+  /** 终端区背景（深 #151517 = 950 / 浅 #FFFFFF = 00）。 */
+  bg: string
+  /** header 条背景（深 #1B1B1C = 900 / 浅 #F9FAFB = 50）。 */
+  headerBg: string
+  fg: string
+  border: string
+  accent: string
+}
+
+/** pty 会话快照（terminal:info 拉取）。 */
+export interface TerminalInfo {
+  alive: boolean
+  cwd: string
+  /** shell 名（zsh/bash/powershell，header 显示用）。 */
+  title: string
+}
+
 /* ---------- preload 暴露面 ---------- */
 
 /** preload 通过 contextBridge 暴露的 `window.dshDesktop`。 */
@@ -150,9 +172,23 @@ export interface DesktopBridge {
   pluginAdd(pkg: string): Promise<PluginCommandResult>
   pluginRemove(pkg: string): Promise<PluginCommandResult>
   pluginUpdate(pkg: string): Promise<PluginCommandResult>
+  /* 内嵌终端（shell 窗口底部面板） */
+  terminalWrite(data: string): Promise<void>
+  terminalResize(cols: number, rows: number): Promise<void>
+  /** 销毁并以当前工作区目录重建 shell。 */
+  terminalRestart(): Promise<TerminalInfo>
+  /** 关闭面板（pty 保留，会话不丢）。 */
+  terminalHide(): Promise<void>
+  /** 拖拽面板上缘调高度（dy 向下为正），返回新高度。 */
+  terminalPanelResize(dy: number): Promise<number>
+  terminalInfo(): Promise<TerminalInfo>
+  terminalTheme(): Promise<TerminalTheme>
   /* 事件订阅（返回退订函数） */
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
   onDshLog(cb: (l: DshLogLine) => void): () => void
   onUpstreamProgress(cb: (p: UpstreamProgress) => void): () => void
   onUpdateStateChanged(cb: (s: UpdateStatus) => void): () => void
+  onTerminalData(cb: (chunk: string) => void): () => void
+  onTerminalExit(cb: () => void): () => void
+  onTerminalTheme(cb: (t: TerminalTheme) => void): () => void
 }

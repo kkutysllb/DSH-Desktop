@@ -19,12 +19,15 @@ export interface DesktopSettings {
   keepRunningInTray: boolean
   /** 上游 Web UI 最后已知的渲染主题（用于启动时预置原生外观，避免闪烁）。 */
   lastTheme: 'system' | 'light' | 'dark'
+  /** 内嵌终端面板高度（拖拽调节后记住）。 */
+  terminalHeight: number | null
 }
 
 const DEFAULTS: DesktopSettings = {
   windowBounds: null,
   keepRunningInTray: true,
   lastTheme: 'system',
+  terminalHeight: null,
 }
 
 let cache: DesktopSettings | null = null

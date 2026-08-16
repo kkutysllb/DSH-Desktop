@@ -13,6 +13,7 @@ import { dshManager } from './dsh-manager'
 import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './upstream'
 import { communityPlugins, installedPlugins, runPluginCommand } from './plugins'
 import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
+import { terminalPanel, terminalTheme } from './terminal-panel'
 import type { UpstreamProgress } from '@shared/ipc-contract'
 
 /** 安装全部 IPC 处理器与事件桥。 */
@@ -61,6 +62,28 @@ export function registerIpc(): void {
   ipcMain.handle('shell:revealPath', (_event, target: string) => {
     void shell.showItemInFolder(target)
     return Promise.resolve()
+  })
+
+  /* ---- 内嵌终端（面板视图 ↔ pty） ---- */
+  ipcMain.handle('terminal:write', (_event, data: string) => {
+    terminalPanel.ptyHost().write(data)
+  })
+  ipcMain.handle('terminal:resize', (_event, cols: number, rows: number) => {
+    terminalPanel.ptyHost().resize(cols, rows)
+  })
+  ipcMain.handle('terminal:restart', () => {
+    const ws = terminalPanel.currentWorkspace()
+    terminalPanel.ptyHost().restart(ws.path)
+    return terminalPanel.ptyHost().info()
+  })
+  ipcMain.handle('terminal:hide', () => {
+    terminalPanel.hide()
+  })
+  ipcMain.handle('terminal:info', () => terminalPanel.ptyHost().info())
+  ipcMain.handle('terminal:theme', () => terminalTheme())
+  ipcMain.handle('terminal:panel-resize', (_event, dy: number) => {
+    terminalPanel.adjustHeight(dy)
+    return terminalPanel.height()
   })
 
   /* ---- 事件广播（面板窗口存在才有听众） ---- */

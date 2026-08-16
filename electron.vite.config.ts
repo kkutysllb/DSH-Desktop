@@ -8,7 +8,7 @@ export default defineConfig({
       // outDir 相对 section root 解析，显式指到项目根的 out/
       outDir: resolve('out/main'),
       lib: { entry: 'main/index.ts' },
-      rollupOptions: { external: ['electron', 'semver', 'electron-updater'] },
+      rollupOptions: { external: ['electron', 'semver', 'electron-updater', 'node-pty'] },
     },
     resolve: {
       alias: { '@shared': resolve('desktop/shared') },

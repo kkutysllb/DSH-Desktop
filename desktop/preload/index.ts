@@ -28,6 +28,13 @@ const bridge: DesktopBridge = {
   updateStatus: () => ipcRenderer.invoke('update:status'),
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
+  terminalWrite: (data) => ipcRenderer.invoke('terminal:write', data),
+  terminalResize: (cols, rows) => ipcRenderer.invoke('terminal:resize', cols, rows),
+  terminalRestart: () => ipcRenderer.invoke('terminal:restart'),
+  terminalHide: () => ipcRenderer.invoke('terminal:hide'),
+  terminalPanelResize: (dy) => ipcRenderer.invoke('terminal:panel-resize', dy),
+  terminalInfo: () => ipcRenderer.invoke('terminal:info'),
+  terminalTheme: () => ipcRenderer.invoke('terminal:theme'),
   onDshStateChanged: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
     ipcRenderer.on('dsh:state-changed', listener)
@@ -47,6 +54,21 @@ const bridge: DesktopBridge = {
     const listener = (_e: Electron.IpcRendererEvent, s: Parameters<typeof cb>[0]): void => cb(s)
     ipcRenderer.on('update:state-changed', listener)
     return () => ipcRenderer.removeListener('update:state-changed', listener)
+  },
+  onTerminalData: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, chunk: string): void => cb(chunk)
+    ipcRenderer.on('terminal:data', listener)
+    return () => ipcRenderer.removeListener('terminal:data', listener)
+  },
+  onTerminalExit: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('terminal:exit', listener)
+    return () => ipcRenderer.removeListener('terminal:exit', listener)
+  },
+  onTerminalTheme: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, t: Parameters<typeof cb>[0]): void => cb(t)
+    ipcRenderer.on('terminal:theme', listener)
+    return () => ipcRenderer.removeListener('terminal:theme', listener)
   },
 }
 

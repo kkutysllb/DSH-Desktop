@@ -21,7 +21,10 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "semver": "^7.7.0"
+    "semver": "^7.7.0",
+    "node-pty": "^1.0.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -38,7 +41,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "esbuild"
+      "esbuild",
+      "node-pty"
     ]
   }
 }

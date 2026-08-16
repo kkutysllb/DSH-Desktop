@@ -13,6 +13,7 @@ import { dshManager } from './dsh-manager'
 import { registerIpc } from './ipc'
 import { installMenu, installTray, wireMenuRefresh } from './menu'
 import { closePanels, showBootstrap, showShellWindow } from './windows'
+import { terminalPanel } from './terminal-panel'
 import { upstreamBuilt, upstreamCloned } from './dsh-contract'
 import { initUpdater } from './updater'
 import { applyNativeTheme, currentThemePref } from './theme-watcher'
@@ -78,6 +79,7 @@ if (!gotLock) {
 
 /* ---------- 退出序列：优雅关停 dsh，绝不留孤儿进程 ---------- */
 app.on('before-quit', (event) => {
+  terminalPanel.dispose() // 杀内嵌终端 shell（SIGTERM 发出即离开）
   if (dshManager.status.state === 'stopped' || dshManager.status.state === 'failed') return
   event.preventDefault()
   void dshManager.stop().then(() => {
