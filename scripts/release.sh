@@ -12,11 +12,12 @@
 #     export APPLE_APP_SPECIFIC_PASSWORD=<应用专用密码>
 #     export APPLE_TEAM_ID=<团队 id>
 #
-# 常用流程：
-#   bash scripts/release.sh bump 0.2.0        # 改版本（自行提交）
-#   bash scripts/release.sh build             # 打包 + 自动校验
-#   bash scripts/release.sh release create v0.2.0   # 上传为 draft
-#   bash scripts/release.sh release publish v0.2.0  # 检查后正式发布
+# 常用流程（一键，KStock 同款）：
+#   bash scripts/release.sh ship 0.2.0   # bump+提交+tag+推送，CI 全自动三平台发布
+#
+# 本地调试/应急（可选）：
+#   bash scripts/release.sh build        # 本地打包 + 校验（含公证，需凭据）
+#   bash scripts/release.sh release create v0.2.0 --publish  # 手动上传发布
 #
 # 出问题时：
 #   bash scripts/release.sh status            # 全局状态总览
@@ -189,6 +190,48 @@ cmd_bump() {
   ok "版本已更新为 $v（记得提交：git add package.json && git commit）"
 }
 
+# ─────────────────────────── ship（一键发布） ───────────────────────────
+
+cmd_ship() {
+  [[ $# -eq 1 ]] || die "用法：release.sh ship <version>（例：0.1.0）"
+  local t; t="$(norm_tag "$1")"; local v; v="$(bare_version "$t")"
+
+  # 前置检查：不覆盖已有 tag；本地不落后远程
+  if git -C "$ROOT" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+    die "本地 tag $t 已存在（先 release.sh tag delete $v 或换版本号）"
+  fi
+  git -C "$ROOT" fetch origin --tags --quiet
+  if git -C "$ROOT" ls-remote --tags origin | grep -q "refs/tags/$t$"; then
+    die "远程 tag $t 已存在"
+  fi
+  git -C "$ROOT" fetch origin main --quiet
+  local behind
+  behind="$(git -C "$ROOT" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+  [[ "$behind" == "0" ]] || die "本地落后 origin/main ${behind} 个提交，先 git pull 再发布"
+
+  # 1) bump 版本
+  cmd_bump "$v" >/dev/null
+
+  # 2) 提交（版本号 + 工作区其他改动一并随发）
+  git -C "$ROOT" add -A
+  if git -C "$ROOT" diff --cached --quiet; then
+    warn "工作区无改动，仅打 tag（版本号未变？确认是否重复发布）"
+  else
+    git -C "$ROOT" commit -m "release: $v"
+    ok "已提交 release: $v"
+  fi
+
+  # 3) tag + 推送（tag 推送即触发 CI 三平台全自动构建发布）
+  git -C "$ROOT" tag "$t"
+  git -C "$ROOT" push origin main
+  git -C "$ROOT" push origin "$t"
+  ok "已推送 main + $t"
+  say "CI 正在三平台构建并自动发布（约 30-40 分钟）："
+  say "  进度：gh run list -R kkutysllb/DSH-Desktop --workflow=Release"
+  say "  页面：https://github.com/kkutysllb/DSH-Desktop/actions"
+  say "  发布：https://github.com/kkutysllb/DSH-Desktop/releases/tag/$t"
+}
+
 # ─────────────────────────── tag ───────────────────────────
 
 cmd_tag() {
@@ -300,13 +343,14 @@ main() {
   local cmd="$1"; shift
   case "$cmd" in
     status)  cmd_status "$@" ;;
+    ship)    cmd_ship "$@" ;;
     build)   cmd_build "$@" ;;
     verify)  cmd_verify "$@" ;;
     bump)    cmd_bump "$@" ;;
     tag)     cmd_tag "$@" ;;
     release) cmd_release "$@" ;;
     help|-h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" ;;
-    *) die "未知命令：$cmd（可用：status build verify bump tag release help）" ;;
+    *) die "未知命令：$cmd（可用：status ship build verify bump tag release help）" ;;
   esac
 }
 

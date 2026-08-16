@@ -1,9 +1,12 @@
 name: Release
 
-# 手动触发（Actions 页面选 tag 运行）。不再由 push tag 自动触发：
-# 发布由 scripts/release.sh 本地手动完成；需要 CI 补三平台产物
-# （Windows/Linux）时再手动跑，避免和本地产物撞车。
+# 一键发布：推 tag 全自动三平台构建并发布（KStock 同款模式）。
+# 本地只需：bash scripts/release.sh ship 0.1.0
+# workflow_dispatch 仅作手动补跑入口（如某平台失败后重试）。
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -28,7 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          # tag 触发时用 tag 本身；手动触发时用输入的 tag
+          ref: ${{ inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -134,6 +138,6 @@ jobs:
         run: ls -lh dist-release
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist-release/**
           generate_release_notes: true
