@@ -1,0 +1,27 @@
+{
+  "name": "dsh-desktop",
+  "productName": "DSH Desktop",
+  "description": "DeepSeek Harness 的 Electron 桌面端：托管 dsh web Host，零修改复用上游 Web UI、API 网关与插件生态",
+  "version": "0.1.0",
+  "private": true,
+  "main": "out/main/index.js",
+  "author": "kkutysllb <kkutysllb@users.noreply.github.com>",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "semver": "^7.7.0",
+    "node-pty": "^1.0.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "node-pty"
+    ]
+  }
+}
