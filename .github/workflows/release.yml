@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# 创建 GitHub Release 需要 contents: write（GITHUB_TOKEN 默认只读）
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 安装桌面端依赖
+        run: pnpm install --frozen-lockfile
+      - name: 克隆并构建上游 deepseek-harness
+        # 上游克隆被 .gitignore 排除，CI 每次现拉现建（install + 三阶段 build）
+        timeout-minutes: 40
+        run: bash scripts/setup.sh
+      - name: 构建安装包（electron-builder）
+        timeout-minutes: 60
+        env:
+          # 无签名 secrets 时绝不自动发现本机签名身份；CSC_LINK 显式
+          # 提供时仍正常走 p12 签名。
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # .app 外壳签名（electron-builder 原生读取）：
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PWD }}
+          # 关键：CSC_IDENTITY_AUTO_DISCOVERY=false 且 CSC_LINK 导入的
+          # 证书不会被自动发现——必须显式给身份名（不含
+          # "Developer ID Application:" 前缀）。值与钥匙串证书名一致。
+          CSC_NAME: "Bing Li (DHV5D72JNF)"
+          # notarization（electron-builder 三者齐全时自动公证）：
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --publish never
+      - name: 校验 macOS 签名与公证（防静默发布损坏包）
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          APP_BUNDLE="$(find dist -maxdepth 3 -name 'DSH Desktop.app' -type d | head -1)"
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "::error::未找到 DSH Desktop.app，无法校验签名"
+            exit 1
+          fi
+          echo "=== 签名身份 ==="
+          codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1 | grep -E "Signature|TeamIdentifier|Authority" || true
+          if codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1 | grep -q "Signature=adhoc"; then
+            echo "::error::产物是 adhoc 签名 —— MAC_CERTIFICATE secrets 未生效"
+            exit 1
+          fi
+          if codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1 | grep -q "TeamIdentifier=not set"; then
+            echo "::error::产物无 TeamIdentifier —— 证书未生效"
+            exit 1
+          fi
+          echo "=== Gatekeeper 评估 ==="
+          spctl -a -vv "$APP_BUNDLE" 2>&1 | tail -3
+          echo "=== 公证票据 ==="
+          xcrun stapler validate "$APP_BUNDLE" 2>&1 || {
+            echo "::error::产物未公证 —— APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID secrets 未生效"
+            exit 1
+          }
+          echo "macOS 产物签名与公证校验通过"
+      - name: 收集安装包
+        run: |
+          mkdir -p dist-release
+          # electron-builder 产物在 dist/。按扩展名收集所有安装包 +
+          # updater 元数据，不依赖文件名前缀。blockmap 是 electron-updater
+          # 增量更新的元数据，latest*.yml 是自动更新的发现入口，必须随包分发。
+          find dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \
+               -o -name '*.AppImage' -o -name '*.deb' \
+               -o -name '*.blockmap' -o -name 'latest*.yml' \) \
+            -exec cp {} dist-release/ \;
+          ls -lh dist-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-${{ matrix.os }}
+          path: dist-release/**
+          if-no-files-found: error
+
+  publish:
+    name: 发布 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+      - name: 列出安装包
+        run: ls -lh dist-release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/**
+          generate_release_notes: true

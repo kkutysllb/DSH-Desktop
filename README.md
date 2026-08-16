@@ -30,7 +30,17 @@ pnpm build && pnpm start
 也可在应用内完成：首次启动会进入"设置"页，一键初始化上游。
 
 - 会话/凭据/插件数据在 `~/.dsh`（`DSH_HOME` 可覆盖），与 `dsh` CLI / `npx dsh web` 完全共享。
-- 打包：`pnpm dist`（electron-builder，macOS dmg）。
+- 本地打包（仅当前平台）：`pnpm dist`（electron-builder，macOS dmg）。
+
+## 发布与自动更新
+
+发布由 GitHub Actions 驱动（`.github/workflows/release.yml`，与 KWorks/KStock 同款模式）：
+
+1. 三平台（macOS / Windows / Linux）matrix 并行构建：CI 现拉上游 `deepseek-harness` 并构建（`scripts/setup.sh`），再 electron-builder 打包；
+2. macOS 产物 Developer ID 签名 + 公证（secrets：`MAC_CERTIFICATE` / `MAC_CERTIFICATE_PWD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`；`CSC_NAME` 在 workflow 中显式指定）；构建后自动校验签名与公证票据，坏包直接失败；
+3. 产物汇合后统一发布 GitHub Release（安装包 + `latest*.yml` + blockmap，electron-updater 的发现/增量更新入口）；
+4. 发布流程：`package.json` 版本号 → 提交 → `git tag v<x.y.z> && git push origin v<x.y.z>`；
+5. 自动更新：应用启动 8s 后静默检测 → 后台下载 → 侧边栏安装按钮/菜单 → 重启安装。
 
 ## 图标
 
