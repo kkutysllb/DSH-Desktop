@@ -44,7 +44,7 @@ app_version() { node -p 'require(process.argv[1]).version' "$ROOT/package.json";
 # 规范化 tag：接受 v0.2.0 或 0.2.0，统一输出 v0.2.0。
 norm_tag() {
   local t="${1#v}"
-  [[ "$t" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "非法版本号：$1（示例：0.2.0）"
+  [[ "$t" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "非法版本号：${1}（示例：0.2.0）"
   echo "v$t"
 }
 
@@ -57,7 +57,7 @@ cmd_status() {
   say "应用版本：$(app_version)"
   if [[ -d "$UPSTREAM/.git" ]]; then
     local bin="$UPSTREAM/apps/cli/lib/bin.js"
-    say "上游克隆：$([[ -f "$bin" ]] && echo "已构建" || echo "未构建（缺 $bin）") @ $(git -C "$UPSTREAM" rev-parse --short HEAD)"
+    say "上游克隆：$([[ -f "$bin" ]] && echo "已构建" || echo "未构建（缺 ${bin}）") @ $(git -C "$UPSTREAM" rev-parse --short HEAD)"
   else
     say "上游克隆：缺失（开发态需要，打包前会自动准备）"
   fi
@@ -165,7 +165,7 @@ cmd_verify() {
   # 5) 自动更新元数据（mac 需 zip + blockmap + latest-mac.yml）
   local miss=0
   for f in latest-mac.yml; do
-    [[ -f "$DIST/$f" ]] || { warn "缺 $DIST/$f（自动更新发现入口）"; miss=1; }
+    [[ -f "$DIST/$f" ]] || { warn "缺 $DIST/${f}（自动更新发现入口）"; miss=1; }
   done
   if ls "$DIST"/*.zip >/dev/null 2>&1 && ls "$DIST"/*.blockmap >/dev/null 2>&1; then
     ok "更新元数据：zip + blockmap 齐全"
@@ -187,7 +187,7 @@ cmd_bump() {
     p.version = process.argv[2]
     fs.writeFileSync(process.argv[1], JSON.stringify(p, null, 2) + "\n")
   ' "$ROOT/package.json" "$v"
-  ok "版本已更新为 $v（记得提交：git add package.json && git commit）"
+  ok "版本已更新为 ${v}（记得提交：git add package.json && git commit）"
 }
 
 # ─────────────────────────── ship（一键发布） ───────────────────────────
@@ -244,14 +244,14 @@ cmd_tag() {
       git -C "$ROOT" rev-parse -q --verify "refs/tags/$t" >/dev/null \
         && die "本地 tag $t 已存在"
       git -C "$ROOT" tag "$t"
-      ok "已创建本地 tag $t（HEAD $(git -C "$ROOT" rev-parse --short HEAD)）"
+      ok "已创建本地 tag ${t}（HEAD $(git -C "$ROOT" rev-parse --short HEAD)）"
       ;;
     push)
       local t
       if [[ $# -eq 1 ]]; then t="$(norm_tag "$1")";
       else t="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null)" || die "无本地 tag"; fi
       git -C "$ROOT" push origin "$t"
-      ok "已推送 $t（如需触发 CI 三平台构建即生效；不需要 CI 可忽略）"
+      ok "已推送 ${t}（如需触发 CI 三平台构建即生效；不需要 CI 可忽略）"
       ;;
     list)
       say "本地：$(git -C "$ROOT" tag -l | tr '\n' ' ')"
@@ -266,7 +266,7 @@ cmd_tag() {
       done
       ;;
     *)
-      die "未知 tag 子命令：$sub（create|push|list|delete）"
+      die "未知 tag 子命令：${sub}（create|push|list|delete）"
       ;;
   esac
 }
@@ -284,12 +284,12 @@ cmd_release() {
       # 版本一致性：package.json 必须 == tag（防版本错位的事故重演）
       local pv; pv="$(app_version)"
       [[ "$pv" == "$(bare_version "$t")" ]] \
-        || die "版本错位：package.json=$pv，tag=$t。先 bash scripts/release.sh bump $(bare_version "$t") 并提交"
+        || die "版本错位：package.json=${pv}，tag=${t}。先 bash scripts/release.sh bump $(bare_version "$t") 并提交"
       # tag 必须存在并指向已推送的提交
       git -C "$ROOT" rev-parse -q --verify "refs/tags/$t" >/dev/null \
-        || die "本地无 $t，先：release.sh tag create $(bare_version "$t")"
+        || die "本地无 ${t}，先：release.sh tag create $(bare_version "$t")"
       git -C "$ROOT" ls-remote --tags origin | grep -q "refs/tags/$t$" \
-        || die "远程无 $t，先：release.sh tag push $t"
+        || die "远程无 ${t}，先：release.sh tag push $t"
       # 产物必须存在且新鲜（当天构建）
       [[ -f "$DIST/latest-mac.yml" ]] || die "dist 无产物，先：release.sh build"
       say "上传产物到 $t …"
@@ -300,7 +300,7 @@ cmd_release() {
       if [[ "$publish" == "--publish" ]]; then
         ok "已正式发布 $t"
       else
-        ok "已创建 draft $t（检查无误后：release.sh release publish $t）"
+        ok "已创建 draft ${t}（检查无误后：release.sh release publish ${t}）"
       fi
       ;;
     list)
@@ -323,7 +323,7 @@ cmd_release() {
           ok "已删除 Release + 远程/本地 tag：$t"
         else
           gh release delete "$t" -R kkutysllb/DSH-Desktop --yes
-          ok "已删除 Release：$t（tag 保留）"
+          ok "已删除 Release：${t}（tag 保留）"
         fi
       else
         warn "Release $t 不存在"
@@ -331,7 +331,7 @@ cmd_release() {
       fi
       ;;
     *)
-      die "未知 release 子命令：$sub（create|list|publish|delete）"
+      die "未知 release 子命令：${sub}（create|list|publish|delete）"
       ;;
   esac
 }
@@ -350,7 +350,7 @@ main() {
     tag)     cmd_tag "$@" ;;
     release) cmd_release "$@" ;;
     help|-h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" ;;
-    *) die "未知命令：$cmd（可用：status ship build verify bump tag release help）" ;;
+    *) die "未知命令：${cmd}（可用：status ship build verify bump tag release help）" ;;
   esac
 }
 
