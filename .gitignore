@@ -1,0 +1,21 @@
+# 上游仓库：仅本地引用，绝不提交（避免污染上游与本项目历史）
+deepseek-harness/
+
+# Node
+node_modules/
+.pnpm-store/
+
+# 构建产物（icon.png 为官方 DeepSeek 图标栅格化产物，随仓库分发）
+out/
+desktop/out/
+dist/
+*.dmg
+*.zip
+*.app
+
+# 日志与缓存
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/

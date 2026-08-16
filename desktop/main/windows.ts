@@ -1,0 +1,155 @@
+/**
+ * 窗口层：承载上游 Web UI 的主窗口（shell）+ 桌面端本地页面（bootstrap/面板）。
+ *
+ * shell 窗口刻意**不注入 preload**——它是上游 Web UI 的纯浏览器载体，
+ * 同源 fetch 与 WebSocket 直接命中 dsh 的 API 网关；桌面能力全部经由
+ * 独立的面板窗口（带 preload）提供，两者互不污染。
+ *
+ * @module desktop/main/windows
+ */
+
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { BrowserWindow, shell } from 'electron'
+import { resolveAsset } from './dsh-contract'
+import { getSettings, saveSettings } from './store'
+
+/** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
+const RENDERER_URL = process.env.ELECTRON_RENDERER_URL
+
+/** 预加载脚本绝对路径。 */
+const PRELOAD = join(__dirname, '../preload/index.js')
+
+let shellWindow: BrowserWindow | null = null
+const panels = new Map<string, BrowserWindow>()
+
+/** 供菜单等处引用。 */
+export function getShellWindow(): BrowserWindow | null {
+  return shellWindow
+}
+
+/**
+ * 创建（或复用并导航到 dsh URL）shell 窗口。
+ * @param dshUrl - dsh web 就绪地址（http://127.0.0.1:<port>）。
+ */
+export function showShellWindow(dshUrl: string): void {
+  if (shellWindow === null || shellWindow.isDestroyed()) {
+    const bounds = getSettings().windowBounds
+    shellWindow = new BrowserWindow({
+      width: bounds?.width ?? 1440,
+      height: bounds?.height ?? 900,
+      x: bounds?.x,
+      y: bounds?.y,
+      minWidth: 960,
+      minHeight: 600,
+      show: false,
+      title: 'DSH Desktop',
+      // 官方 DeepSeek 图标（macOS 用 Dock 图标，此项服务 Linux/Windows）
+      icon: resolveAsset('icon.png'),
+      // 纯浏览器载体：无 node、无 preload、webSecurity 开启
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    })
+    shellWindow.once('ready-to-show', () => shellWindow?.show())
+    shellWindow.on('resized', persistBounds)
+    shellWindow.on('moved', persistBounds)
+    // 只允许停留在 dsh 回环地址；外链交给系统浏览器
+    shellWindow.webContents.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    shellWindow.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith(dshUrl)) {
+        event.preventDefault()
+        void shell.openExternal(url)
+      }
+    })
+    // dsh Web UI 无需任何浏览器特权
+    shellWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+      callback(false)
+    })
+  }
+  void shellWindow.loadURL(dshUrl)
+  if (!shellWindow.isVisible()) shellWindow.show()
+  shellWindow.focus()
+}
+
+function persistBounds(): void {
+  const win = shellWindow
+  if (win === null || win.isDestroyed()) return
+  saveSettings({ windowBounds: win.getNormalBounds() })
+}
+
+/**
+ * 打开（或聚焦）一个桌面端本地面板窗口。
+ * @param panel - 面板标识，同时是 hash 路由（#/diagnostics 等）。
+ * @param title - 窗口标题。
+ */
+export function openPanel(panel: 'setup' | 'diagnostics' | 'sync' | 'plugins', title: string): void {
+  const existing = panels.get(panel)
+  if (existing !== undefined && !existing.isDestroyed()) {
+    existing.show()
+    existing.focus()
+    return
+  }
+  const win = new BrowserWindow({
+    width: 880,
+    height: 640,
+    title,
+    show: false,
+    autoHideMenuBar: true,
+    icon: resolveAsset('icon.png'),
+    webPreferences: {
+      preload: PRELOAD,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  })
+  panels.set(panel, win)
+  win.on('closed', () => panels.delete(panel))
+  win.once('ready-to-show', () => win.show())
+  const url = RENDERER_URL !== undefined
+    ? `${RENDERER_URL}/#/${panel}`
+    : `${pathToFileURL(join(__dirname, '../renderer/index.html')).href}#/${panel}`
+  void win.loadURL(url)
+}
+
+/**
+ * 打开 bootstrap 窗口（splash/失败引导）。桌面端启动时先显示，
+ * dsh 就绪后由 index.ts 切到 shell 窗口。
+ */
+export function showBootstrap(route: 'splash' | 'setup'): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 720,
+    height: 560,
+    title: 'DSH Desktop',
+    resizable: false,
+    show: false,
+    autoHideMenuBar: true,
+    icon: resolveAsset('icon.png'),
+    webPreferences: {
+      preload: PRELOAD,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  })
+  win.once('ready-to-show', () => win.show())
+  const url = RENDERER_URL !== undefined
+    ? `${RENDERER_URL}/#/${route}`
+    : `${pathToFileURL(join(__dirname, '../renderer/index.html')).href}#/${route}`
+  void win.loadURL(url)
+  return win
+}
+
+/** 关闭全部面板窗口（应用退出前）。 */
+export function closePanels(): void {
+  for (const win of panels.values()) {
+    if (!win.isDestroyed()) win.destroy()
+  }
+  panels.clear()
+}

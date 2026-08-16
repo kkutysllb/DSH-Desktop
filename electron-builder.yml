@@ -1,0 +1,33 @@
+appId: com.kkutysllb.dsh-desktop
+productName: DSH Desktop
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - "!**/*.map"
+extraResources:
+  # scripts 与 assets（官方图标）随应用分发，供首次引导与托盘使用
+  - from: scripts
+    to: scripts
+    filter: ["*.sh"]
+  - from: assets
+    to: assets
+    filter: ["*.png", "*.svg"]
+asarUnpack:
+  - "**/*.sh"
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  icon: build/icon.png
+  minimumSystemVersion: '13.0'
+dmg:
+  title: DSH Desktop ${version}
+linux:
+  target: [AppImage]
+  category: Development
+win:
+  target: [nsis]
+publish: null

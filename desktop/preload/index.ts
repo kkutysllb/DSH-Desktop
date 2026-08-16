@@ -1,0 +1,45 @@
+/**
+ * Preload：以 contextBridge 暴露契约化的 `window.dshDesktop`。
+ *
+ * 只做白名单转发（通道名与 shared/ipc-contract 一一对应），
+ * 不暴露 ipcRenderer 本体，不暴露 Node 能力。
+ *
+ * @module desktop/preload
+ */
+
+import { contextBridge, ipcRenderer } from 'electron'
+import type { DesktopBridge } from '@shared/ipc-contract'
+
+const bridge: DesktopBridge = {
+  dshStatus: () => ipcRenderer.invoke('dsh:status'),
+  dshLogs: () => ipcRenderer.invoke('dsh:logs'),
+  dshStart: () => ipcRenderer.invoke('dsh:start'),
+  dshRestart: () => ipcRenderer.invoke('dsh:restart'),
+  upstreamStatus: () => ipcRenderer.invoke('upstream:status'),
+  upstreamSync: () => ipcRenderer.invoke('upstream:sync'),
+  upstreamSetup: () => ipcRenderer.invoke('upstream:setup'),
+  pluginsInstalled: () => ipcRenderer.invoke('plugins:installed'),
+  pluginsCommunity: () => ipcRenderer.invoke('plugins:community'),
+  pluginAdd: (pkg) => ipcRenderer.invoke('plugins:add', pkg),
+  pluginRemove: (pkg) => ipcRenderer.invoke('plugins:remove', pkg),
+  pluginUpdate: (pkg) => ipcRenderer.invoke('plugins:update', pkg),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  revealPath: (path) => ipcRenderer.invoke('shell:revealPath', path),
+  onDshStateChanged: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
+    ipcRenderer.on('dsh:state-changed', listener)
+    return () => ipcRenderer.removeListener('dsh:state-changed', listener)
+  },
+  onDshLog: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, line: Parameters<typeof cb>[0]): void => cb(line)
+    ipcRenderer.on('dsh:log', listener)
+    return () => ipcRenderer.removeListener('dsh:log', listener)
+  },
+  onUpstreamProgress: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: Parameters<typeof cb>[0]): void => cb(p)
+    ipcRenderer.on('upstream:progress', listener)
+    return () => ipcRenderer.removeListener('upstream:progress', listener)
+  },
+}
+
+contextBridge.exposeInMainWorld('dshDesktop', bridge)
