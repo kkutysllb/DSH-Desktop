@@ -14,7 +14,7 @@ import { registerIpc } from './ipc'
 import { installMenu, installTray, wireMenuRefresh } from './menu'
 import { closePanels, showBootstrap, showShellWindow } from './windows'
 import { terminalPanel } from './terminal-panel'
-import { bundledRuntimeDir, upstreamBuilt, upstreamCloned } from './dsh-contract'
+import { bundledRuntimeArchive, upstreamBuilt, upstreamCloned } from './dsh-contract'
 import { initUpdater } from './updater'
 import { applyNativeTheme, currentThemePref } from './theme-watcher'
 
@@ -49,8 +49,9 @@ app.whenReady().then(() => {
   dshManager.on('state-changed', onStateChanged)
 
   // 上游未就绪时先打开 setup（仍会尝试 PATH dsh / DSH_BIN）；
-  // 打包态以内置运行时为准（resources/dsh-runtime），不依赖本地克隆
-  if (bundledRuntimeDir() === null && (!upstreamCloned() || !upstreamBuilt())) {
+  // 打包态以内置运行时为准（resources/dsh-runtime.tar.gz 首启解压），
+  // 不依赖本地克隆
+  if (bundledRuntimeArchive() === null && (!upstreamCloned() || !upstreamBuilt())) {
     bootstrap?.close()
     bootstrap = showBootstrap('setup')
   }

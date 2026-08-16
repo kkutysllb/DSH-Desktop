@@ -7,18 +7,13 @@ files:
   - out/**
   - "!**/*.map"
 extraResources:
-  # 开箱即用的核心：上游运行时（pnpm deploy + peer 补齐 + flatten）
-  # 随包分发——安装后无需克隆/构建上游。注意：electron-builder 的
-  # 目录遍历默认丢弃 node_modules，必须把 node_modules 拆成独立
-  # from 条目才能进包。由 scripts/release.sh build 物化到 staging/。
-  - from: staging/dsh-runtime/lib
-    to: dsh-runtime/lib
-  - from: staging/dsh-runtime/config
-    to: dsh-runtime/config
-  - from: staging/dsh-runtime/package.json
-    to: dsh-runtime/package.json
-  - from: staging/dsh-runtime/node_modules
-    to: dsh-runtime/node_modules
+  # 开箱即用的核心：上游运行时（pnpm deploy + peer 补齐 + flatten +
+  # 瘦身）以单文件 tar.gz 随包分发，首启解压到 userData（见
+  # dsh-contract.ts ensureBundledRuntime）。不走散文件目录：electron-
+  # builder 复制/签名数万文件会撞 macOS EMFILE。由 scripts/release.sh
+  # build 物化到 staging/dsh-runtime.tar.gz。
+  - from: staging/dsh-runtime.tar.gz
+    to: dsh-runtime.tar.gz
   # scripts 与 assets（官方图标）随应用分发，供首次引导与托盘使用
   - from: scripts
     to: scripts

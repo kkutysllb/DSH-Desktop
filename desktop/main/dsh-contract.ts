@@ -23,10 +23,11 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { satisfies } from 'semver'
+import { app } from 'electron'
 import type { DshSource } from '@shared/ipc-contract'
 
 /** 就绪行的解析规则：`dsh web: http://127.0.0.1:<port>`。 */
@@ -48,14 +49,65 @@ export const PROJECT_ROOT = resolve(__dirname, '..', '..')
 export const UPSTREAM_DIR = join(PROJECT_ROOT, UPSTREAM_DIR_NAME)
 
 /**
- * 打包内置的上游运行时（extraResources/dsh-runtime，开箱即用的核心）。
- * 开发态（未打包/未物化）返回 null，走本地克隆。
+ * 打包内置的上游运行时压缩包（extraResources/dsh-runtime.tar.gz）。
+ * 运行时以单文件随包分发（散文件会让 electron-builder 的复制/签名
+ * 撞 EMFILE），首启解压到 userData。开发态（未打包）返回 null。
  */
-export function bundledRuntimeDir(): string | null {
+export function bundledRuntimeArchive(): string | null {
   const base = process.resourcesPath
   if (base === undefined) return null
-  const dir = join(base, 'dsh-runtime')
-  return existsSync(join(dir, BUNDLED_BIN)) ? dir : null
+  const tar = join(base, 'dsh-runtime.tar.gz')
+  return existsSync(tar) ? tar : null
+}
+
+/** 已解压内置运行时的目标目录（userData 下，跨启动复用）。 */
+function bundledRuntimeExtractDir(): string {
+  return join(app.getPath('userData'), 'dsh-runtime')
+}
+
+let runtimeBusy = false
+
+/**
+ * 确保内置运行时可用（幂等）：tar 指纹（size+mtime）与上次一致时直接
+ * 复用解压目录；否则原子重新解压（临时目录解压后 rename 顶替）。
+ * 首次解压约数秒（同步，一次性）；打包态无 tar 返回 null。
+ */
+export function ensureBundledRuntime(): string | null {
+  const tar = bundledRuntimeArchive()
+  if (tar === null) return null
+  const dest = bundledRuntimeExtractDir()
+  const stampOf = (p: string) => {
+    const st = statSync(p)
+    return `${st.size}:${Math.trunc(st.mtimeMs)}`
+  }
+  if (existsSync(join(dest, BUNDLED_BIN))) {
+    try {
+      if (readFileSync(join(dest, '.runtime-stamp'), 'utf8') === stampOf(tar)) return dest
+    } catch { /* 指纹缺失，重新解压 */ }
+  }
+  if (runtimeBusy) return null
+  runtimeBusy = true
+  try {
+    const tmp = `${dest}.tmp-${process.pid}`
+    rmSync(tmp, { recursive: true, force: true })
+    mkdirSync(tmp, { recursive: true })
+    // macOS/Linux/Windows 10+ 均自带 tar（bsdtar 兼容 -xzf）；失败回退
+    // 到克隆/PATH 分支而非崩溃
+    const res = spawnSync('tar', ['-xzf', tar, '-C', tmp], { timeout: 180_000 })
+    const root = existsSync(join(tmp, BUNDLED_BIN)) ? tmp : join(tmp, 'dsh-runtime')
+    if (res.status !== 0 || !existsSync(join(root, BUNDLED_BIN))) {
+      console.error(`[dsh-contract] 内置运行时解压失败：${String(res.stderr)}`)
+      rmSync(tmp, { recursive: true, force: true })
+      return null
+    }
+    writeFileSync(join(root, '.runtime-stamp'), stampOf(tar))
+    rmSync(dest, { recursive: true, force: true })
+    renameSync(root, dest)
+    if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true })
+    return dest
+  } finally {
+    runtimeBusy = false
+  }
 }
 
 /**
@@ -143,8 +195,8 @@ export interface DshCommand {
 /**
  * 解析启动 dsh 的命令，优先级：
  * 1. `DSH_BIN` 环境变量（可执行文件或 `node script.js` 形式）
- * 2. 打包内置运行时（`resources/dsh-runtime`，安装即用；系统 node
- *    满足版本要求时用系统，否则用 Electron 内置 node）
+ * 2. 打包内置运行时（resources/dsh-runtime.tar.gz 首启解压到
+ *    userData；系统 node 满足版本要求时用系统，否则用 Electron 内置 node）
  * 3. 本地克隆的构建产物（`node apps/cli/lib/bin.js`，开发态）
  * 4. PATH 中的 `dsh`
  *
@@ -167,7 +219,7 @@ export function resolveDshCommand(): DshCommand | null {
 
   // 2) 打包内置运行时（物化产物是纯 JS，不挑 node 小版本；
   // 系统 node 缺失或不满足 range 时无条件用 Electron 内置 node）
-  const bundled = bundledRuntimeDir()
+  const bundled = ensureBundledRuntime()
   if (bundled !== null) {
     const runtime = resolveRuntime()
     const cmd = runtime ?? { command: process.execPath, args: [], isElectron: true }

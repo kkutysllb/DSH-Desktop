@@ -22,7 +22,7 @@
  * @module scripts/materialize-peers
  */
 import { execSync } from 'node:child_process'
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -264,6 +264,49 @@ const flatten = (dir) => {
 flatten(topNM)
 rmSync(join(topNM, '.pnpm'), { recursive: true, force: true })
 console.log(`[materialize] flatten：${flattened} 个 symlink→实体，已删 .pnpm`)
+
+// 瘦身：sourcemap（*.map）与类型声明（*.d.ts）是运行时死重（合计约
+// 1.4 万文件），删除后包体更小、签名/解压更快
+let pruned = 0
+const walk = (dir) => {
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === '.bin') continue
+    const p = join(dir, e.name)
+    if (e.isDirectory()) walk(p)
+    else if (e.name.endsWith('.map') || e.name.endsWith('.d.ts')) {
+      rmSync(p, { force: true })
+      pruned++
+    }
+  }
+}
+walk(staging)
+console.log(`[materialize] 瘦身：删 ${pruned} 个 .map/.d.ts`)
+
+// 单文件归档：electron-builder 对数万散文件的复制/签名在 macOS 撞
+// EMFILE（文件描述符上限）；改为一个 tar.gz 进包、首启解压到 userData
+// （见 dsh-contract.ts ensureBundledRuntime）。从 runtime 根内容打包，
+// 解压顶层即 lib/node_modules/package.json。.bin 内是指向已删 .pnpm 的
+// dangling 链接，运行时（直接 node lib/bin.js）用不到，一并清除。
+rmSync(join(topNM, '.bin'), { recursive: true, force: true })
+const tarPath = join(root, 'staging', 'dsh-runtime.tar.gz')
+rmSync(tarPath, { force: true })
+execSync('tar -czf "' + tarPath + '" .', {
+  cwd: staging,
+  stdio: 'ignore',
+  // Windows 上引号传递走 cmd 最稳（tar.exe 对正斜杠路径友好）
+  shell: process.platform === 'win32',
+})
+let tarSize = 0
+try {
+  tarSize = Math.round(statSync(tarPath).size / 1024 / 1024)
+} catch { /* 仅展示 */ }
+console.log(`[materialize] 归档：staging/dsh-runtime.tar.gz（${tarSize} MB）`)
 // 自检：补完后再扫一轮，非 optional 的依赖引用必须全部可达
 for (const pj of stagingManifests()) {
   let pkg
