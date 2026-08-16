@@ -7,17 +7,22 @@
  * dependencies 闭包，peer 全部漏掉 → 物化产物启动即 ERR_MODULE_NOT_FOUND。
  *
  * 本脚本在 deploy 之后运行：
- * 1. 扫描 staging 内所有实体包的 peerDependencies + dependencies；
+ * 1. 扫描 staging 内所有实体包的 peerDependencies + dependencies +
+ *    optionalDependencies（平台二进制都在 optional 里）；
  * 2. 缺失且能溯源的（上游 workspace 包 / 上游 node_modules 实体）复制
  *    到 staging/node_modules 顶层（ESM 向上解析的全局兜底位置）；
  * 3. 递归处理新补包自己的依赖引用，直到收敛；
- * 4. 可选 peer（peerDependenciesMeta.optional）跳过并提示。
+ * 4. 溯源不到的非 optional 依赖，从 npm registry 兜底安装（实测 CI
+ *    Windows 上游 pnpm install 会少装个别纯 JS 包，如
+ *    @opentelemetry/exporter-logs-otlp-http —— 不能赌上游 .pnpm 恰好全）；
+ *    optional 缺失（非当前平台的二进制）跳过并提示。
  *
- * 跨平台（node:fs），CI 三平台与本地 scripts/release.sh build 共用。
+ * 跨平台（node:fs + npm），CI 三平台与本地 scripts/release.sh build 共用。
  *
  * @module scripts/materialize-peers
  */
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs'
+import { execSync } from 'node:child_process'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -148,6 +153,8 @@ function* manifestsUnder(dir) {
 const ws = scanWorkspace()
 const placed = []
 const skippedOptional = []
+// 溯源不到的非 optional 依赖：name → 引用方声明的 semver range（npm 兜底用）
+const unresolved = new Map()
 let changed = true
 while (changed) {
   changed = false
@@ -159,34 +166,82 @@ while (changed) {
       continue
     }
     const meta = pkg.peerDependenciesMeta ?? {}
-    const wanted = new Set([
-      ...Object.keys(pkg.dependencies ?? {}),
-      ...Object.keys(pkg.peerDependencies ?? {}),
+    for (const [kind, section] of [
+      ['dep', pkg.dependencies ?? {}],
+      ['peer', pkg.peerDependencies ?? {}],
       // 平台二进制包（sharp/koffi/node-pty 的 darwin-arm64 等）全部声明在
-      // optionalDependencies，漏扫会导致原生模块运行时缺失
-      ...Object.keys(pkg.optionalDependencies ?? {}),
-    ])
-    for (const name of wanted) {
-      if (existsSync(join(topNM, name))) continue
-      const optional = meta[name]?.optional === true
-      const wsSrc = ws.get(name)
-      const src = wsSrc ?? findExternal(name)
-      if (src === null) {
-        if (!optional && !skippedOptional.includes(name)) {
-          skippedOptional.push(name)
+      // optionalDependencies，漏扫会导致原生模块运行时缺失；溯源不到则
+      // 视为非当前平台，跳过
+      ['opt', pkg.optionalDependencies ?? {}],
+    ]) {
+      for (const [name, range] of Object.entries(section)) {
+        if (existsSync(join(topNM, name))) continue
+        const optional = kind === 'opt' || (kind === 'peer' && meta[name]?.optional === true)
+        const wsSrc = ws.get(name)
+        const src = wsSrc ?? findExternal(name)
+        if (src === null) {
+          if (optional) {
+            if (!skippedOptional.includes(name)) skippedOptional.push(name)
+          } else if (!unresolved.has(name)) {
+            unresolved.set(name, range)
+          }
+          continue
         }
-        continue
-      }
-      if (placePkg(src, name, wsSrc !== undefined)) {
-        placed.push(name)
-        changed = true
+        if (placePkg(src, name, wsSrc !== undefined)) {
+          placed.push(name)
+          changed = true
+        }
       }
     }
   }
 }
 
-const missingNote = skippedOptional.length > 0 ? `；未溯源跳过：${skippedOptional.join(', ')}` : ''
+const missingNote = skippedOptional.length > 0 ? `；可选跳过（非当前平台/未溯源）：${skippedOptional.join(', ')}` : ''
 console.log(`[materialize] 补齐 ${placed.length} 个包到顶层 node_modules${missingNote}`)
+
+// npm registry 兜底：上游 .pnpm 溯源不到的非 optional 依赖，在临时目录
+// 按 npm 语义安装后合并到顶层。npm 自动解析 semver/子依赖/平台过滤，
+// 装出来的布局就是纯 npm 风格，与 flatten 后的目标一致。
+if (unresolved.size > 0) {
+  const names = [...unresolved.keys()]
+  console.log(`[materialize] registry 兜底安装 ${names.length} 个上游缺失包：${names.join(', ')}`)
+  const fb = join(root, 'staging', '.npm-fallback')
+  rmSync(fb, { recursive: true, force: true })
+  mkdirSync(fb, { recursive: true })
+  const deps = Object.fromEntries([...unresolved].map(([n, r]) => [n, r]))
+  writeFileSync(join(fb, 'package.json'), JSON.stringify({
+    name: 'dsh-desktop-runtime-fallback',
+    private: true,
+    dependencies: deps,
+  }, null, 2))
+  try {
+    // 独立 cache：避开全局 ~/.npm 的历史遗留权限问题（root 属主文件
+    // 会 EPERM），CI/本地行为一致
+    execSync('npm install --omit=dev --omit=optional --no-audit --no-fund --no-package-lock --cache .npm-cache', {
+      cwd: fb,
+      stdio: 'inherit',
+      // Windows 上 npm 是 cmd 脚本，必须 shell
+      shell: process.platform === 'win32',
+    })
+  } catch (err) {
+    console.error(`[materialize] registry 兜底安装失败：${names.join(', ')}`)
+    console.error(String(err?.message ?? err))
+    process.exit(1)
+  }
+  const fbNM = join(fb, 'node_modules')
+  if (!existsSync(fbNM)) {
+    console.error('[materialize] registry 兜底未产出 node_modules')
+    process.exit(1)
+  }
+  let merged = 0
+  for (const e of readdirSync(fbNM, { withFileTypes: true })) {
+    if (e.name.startsWith('.')) continue
+    cpSync(join(fbNM, e.name), join(topNM, e.name), { recursive: true, force: true })
+    merged++
+  }
+  console.log(`[materialize] registry 兜底合并 ${merged} 个条目到顶层 node_modules`)
+  rmSync(fb, { recursive: true, force: true })
+}
 
 // flatten：symlink 全部替换为实体副本，删除 .pnpm 虚拟存储。
 // pnpm 的符号链接布局会被 electron-builder 复制 extraResources 时丢弃
@@ -209,7 +264,7 @@ const flatten = (dir) => {
 flatten(topNM)
 rmSync(join(topNM, '.pnpm'), { recursive: true, force: true })
 console.log(`[materialize] flatten：${flattened} 个 symlink→实体，已删 .pnpm`)
-// 自检：补完后再扫一轮，纯 peer 引用必须全部可达
+// 自检：补完后再扫一轮，非 optional 的依赖引用必须全部可达
 for (const pj of stagingManifests()) {
   let pkg
   try {
@@ -218,12 +273,17 @@ for (const pj of stagingManifests()) {
     continue
   }
   const meta = pkg.peerDependenciesMeta ?? {}
-  for (const name of Object.keys(pkg.peerDependencies ?? {})) {
-    if (meta[name]?.optional === true) continue
-    if (!existsSync(join(topNM, name))) {
-      console.error(`[materialize] 自检失败：${name} 仍不可达（被 ${pj} peer 引用）`)
-      process.exit(1)
+  for (const [kind, section] of [
+    ['dep', pkg.dependencies ?? {}],
+    ['peer', pkg.peerDependencies ?? {}],
+  ]) {
+    for (const name of Object.keys(section)) {
+      if (kind === 'peer' && meta[name]?.optional === true) continue
+      if (!existsSync(join(topNM, name))) {
+        console.error(`[materialize] 自检失败：${name} 仍不可达（被 ${pj} ${kind} 引用）`)
+        process.exit(1)
+      }
     }
   }
 }
-console.log('[materialize] 自检通过：所有非可选 peer 可达')
+console.log('[materialize] 自检通过：所有非可选依赖可达')

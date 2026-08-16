@@ -118,6 +118,9 @@ cmd_build() {
     export APPLE_TEAM_ID=DHV5D72JNF"
   fi
   say "electron-builder 打包…"
+  # 内置运行时 node_modules 文件数上万，macOS 默认 256 句柄会在签名阶段撞
+  # EMFILE: too many open files
+  ulimit -n 65536 2>/dev/null || true
   rm -rf "$DIST"
   (cd "$ROOT" && pnpm exec electron-vite build && pnpm exec electron-builder --publish never)
 
