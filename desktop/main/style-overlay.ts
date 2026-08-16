@@ -4,9 +4,15 @@
  * 上游是高度 token 化的设计系统（ui-theme 的 --dsw-* / --ds-* 变量），
  * 排版出口全部变量化——覆盖层在文档末尾注入 `<style>`，按同特异性
  * 后到者赢的层叠规则直接改写 token 值；个别写死在 CSS Modules 规则
- * 里的值（气泡宽度/圆角等）用「文件名前缀 + 类名」属性选择器匹配
- * （如 [class*="MessageItem_bubble"]，产物类名形态 MessageItem_bubble__hash，
- * 全前端唯一，不会误伤同名类）。
+ * 里的值（气泡宽度/圆角等）用属性选择器匹配 scoped 产物类名。
+ *
+ * 产物类名含「_+原类名」子串，但 hash 位置随构建形态不同（dsh 运行
+ * 时即时编译是 _<hash>_<类名>，vite build 是 _<类名>_<hash>）——
+ * 一律按「_+类名」子串匹配（如 [class*="_userStack"]），不依赖
+ * hash 的位置与具体值。同名类跨文件冲突（.bubble 在 Tooltip/
+ * MessageItem/GoalCommandInputView 三处）用结构判别（userStack 后代）；
+ * 类名太泛的（_root/_block）只重定义无人误消费的 CSS 变量。
+ * 上游类改名 → 覆盖静默失效回原样，不崩不错位。
  *
  * 主题适配纯 CSS 完成：上游深色主题挂 body[data-ds-dark-theme]，
  * 覆盖层用同一宿主选择器写深色差异，无需监听主题事件重注入。
@@ -59,25 +65,28 @@ const OVERRIDE_CSS = `
   --dsw-font-markdown-code-block-line-height: 21px;
 }
 
-/* ---- 用户气泡：宽度上限放宽（宽屏）+ 圆角/内距/字号利落化 ---- */
-[class*="MessageItem_userStack"] { max-width: min(640px, 88%) !important; }
-[class*="MessageItem_bubble"] {
+/* ---- 用户气泡：宽度上限放宽（宽屏）+ 圆角/内距/字号利落化。
+   bubble 类跨文件同名（Tooltip/MessageItem/GoalCommandInput 三处），
+   用「userStack 后代」结构判别锁定 MessageItem 的那一处（userStack
+   全仓唯一）；两个选择器均按「_+类名」子串匹配，对 hash 位置无感 */
+[class*="_userStack"] { max-width: min(640px, 88%) !important; }
+[class*="_userStack"] [class*="_bubble"] {
   border-radius: 16px !important;
   padding: 8px 14px !important;
   font-size: 15px !important;
   line-height: 23px !important;
 }
 
-/* ---- assistant 正文：与 markdown base 统一，块间距微收 ---- */
-[class*="AssistantMarkdown_root"] { font-size: 14px !important; line-height: 22px !important; }
-[class*="AssistantMarkdown_body"] { gap: 14px !important; }
+/* ---- 代码块：圆角收敛（局部变量重定义，banner 顶角自动跟随）。
+   _block 是常见类名，泛匹配仅定义一个局部变量——非 CodeBlock 的
+   block 后代不消费 --dsl-code-block-border-radius，零视觉副作用 */
+[class*="_block"] { --dsl-code-block-border-radius: 10px; }
 
-/* ---- 代码块：圆角收敛（局部变量重定义，banner 顶角自动跟随） ---- */
-[class*="CodeBlock_block"] { --dsl-code-block-border-radius: 10px; }
-
-/* ---- 消息列宽：960 → 1080（挂在 ConversationRoot 容器自身，:root 覆盖无效；
-   输入卡/dock 卡引用同一变量自动跟随，上游是单一宽度轴设计） ---- */
-[class*="ConversationRoot_root"] {
+/* ---- 消息列宽：960 → 1080。定义方（ConversationRoot 容器）与消费方
+   （ChatView/输入卡等）同用 _root 类名；泛匹配把 1080 广播到所有
+   root，消费方取最近定义一致为 1080，非会话子树不消费该变量，
+   上游是单一宽度轴设计，输入卡/dock 卡自动跟随 */
+[class*="_root"] {
   --dsh-chat-content-width: 1080px;
 }
 

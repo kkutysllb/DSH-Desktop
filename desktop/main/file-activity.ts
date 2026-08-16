@@ -14,7 +14,9 @@
  *   - `view.view.card === 'diff'`：DiffResultView（diffs = applied
  *     contextual hunks，`{path, oldText|null, newText}`）；
  * - view 是 host 侧即时推导的渲染意图、不持久化——断线重连前发生的
- *   活动不会重放，抽屉展示"连接之后"的实时活动，符合预览场景。
+ *   活动不会重放。历史会话的活动通过 {@link FileActivity.fetchHistory}
+ *   补拉：session.history RPC 的 HistoryEntry 携带同一形状的 view
+ *   （分页时推导），页面打开会话时由注入 hook 上报 sessionId 触发。
  *
  * 生命周期跟随 dshManager：ready 即连（重启换端口自动重连），其余
  * 状态断开；活动按文件聚合（同文件取最新），上限 {@link MAX_ENTRIES}。
@@ -111,6 +113,9 @@ class FileActivity extends EventEmitter {
   private ws: WebSocket | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
   private workspace: string | null = null
+  /** 最近一次历史补拉的会话与时间（翻页重复上报去重）。 */
+  private lastHistorySession = ''
+  private lastHistoryAt = 0
 
   constructor() {
     super()
@@ -163,6 +168,51 @@ class FileActivity extends EventEmitter {
   /** 应用退出前清理。 */
   dispose(): void {
     this.disconnect()
+  }
+
+  /**
+   * 拉会话历史补活动（页面打开/切换会话时由注入 hook 触发）：mux
+   * 不重放历史，读/编辑活动只能从 session.history 的分页时 view 推导
+   * 补回。失败静默（面板退化为只显示实时活动）。
+   */
+  async fetchHistory(sessionId: string): Promise<void> {
+    const now = Date.now()
+    // 同会话翻页会重复上报（每页一次 RPC），短窗口去重只拉首页
+    if (sessionId === this.lastHistorySession && now - this.lastHistoryAt < 5_000) return
+    const status = dshManager.status
+    if (status.state !== 'ready' || status.url === null) return
+    try {
+      // 与页面同源的 POST RPC（Node fetch 不带 Origin，loopback 受信）
+      const resp = await fetch(`${status.url}/api/session.history`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: `dsh-desktop-history-${now}`,
+          method: 'session.history',
+          payload: { sessionId },
+        }),
+      })
+      if (!resp.ok) return
+      const body = JSON.parse(await resp.text()) as {
+        result?: {
+          ok?: boolean
+          value?: { events?: Array<{ view?: { for?: string; view?: Record<string, unknown> } }> }
+        }
+      }
+      const events = body.result?.ok === true ? body.result.value?.events : undefined
+      if (!Array.isArray(events)) return
+      this.lastHistorySession = sessionId
+      this.lastHistoryAt = Date.now()
+      for (const e of events) {
+        // HistoryEntry.view 与 mux 帧同构（ToolEventView：for + view.card）
+        if (e?.view?.for !== 'result' || e.view.view === undefined) continue
+        const entry = this.entryFromCard(e.view.view)
+        if (entry !== null) this.record(entry)
+      }
+    } catch {
+      // dsh 重启间隙 / 响应非 JSON 等：静默，下次会话打开重试
+    }
   }
 
   private connect(httpUrl: string): void {
@@ -219,22 +269,27 @@ class FileActivity extends EventEmitter {
     if (frame.event?.type !== 'tool/result') return
     const view = frame.view
     if (view?.for !== 'result' || view.view === undefined) return
-    const card = view.view
-    let entry: PreviewEntry | null = null
+    const entry = this.entryFromCard(view.view)
+    if (entry === null) return
+    this.record(entry)
+  }
+
+  /** view.view（card）→ 活动条目；不可识别的 card 返回 null。 */
+  private entryFromCard(card: Record<string, unknown>): PreviewEntry | null {
     if (card.card === 'read') {
       const path = typeof card.path === 'string' ? card.path : null
-      if (path !== null) {
-        entry = {
-          path: this.resolve(path),
-          kind: 'read',
-          at: Date.now(),
-          added: 0,
-          removed: 0,
-          lang: langOf(path, card.lang),
-          diffs: null,
-        }
+      if (path === null) return null
+      return {
+        path: this.resolve(path),
+        kind: 'read',
+        at: Date.now(),
+        added: 0,
+        removed: 0,
+        lang: langOf(path, card.lang),
+        diffs: null,
       }
-    } else if (card.card === 'diff') {
+    }
+    if (card.card === 'diff') {
       const diffsRaw = Array.isArray(card.diffs) ? card.diffs : []
       const diffs = diffsRaw.flatMap((d) => {
         if (d === null || typeof d !== 'object') return []
@@ -244,7 +299,7 @@ class FileActivity extends EventEmitter {
         const oldText = typeof (d as Record<string, unknown>).oldText === 'string' ? (d as Record<string, unknown>).oldText as string : null
         return [{ path: this.resolve(p), oldText, newText }]
       })
-      if (diffs.length === 0) return
+      if (diffs.length === 0) return null
       // 首个 hunk 定位主文件（多文件 hunk 极罕见，badge 取合计）
       let added = 0
       let removed = 0
@@ -253,7 +308,7 @@ class FileActivity extends EventEmitter {
         added += counts.added
         removed += counts.removed
       }
-      entry = {
+      return {
         path: diffs[0].path,
         kind: 'edit',
         at: Date.now(),
@@ -263,8 +318,11 @@ class FileActivity extends EventEmitter {
         diffs,
       }
     }
-    if (entry === null) return
-    // 同文件聚合：移到最新位置（Map 插入序即活动序）
+    return null
+  }
+
+  /** 入列（同文件聚合、上限淘汰）+ 通知监听方。 */
+  private record(entry: PreviewEntry): void {
     this.byPath.delete(entry.path)
     this.byPath.set(entry.path, entry)
     while (this.byPath.size > MAX_ENTRIES) {

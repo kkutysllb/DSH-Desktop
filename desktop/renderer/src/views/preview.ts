@@ -240,13 +240,19 @@ export async function mountPreview(root: HTMLElement): Promise<void> {
   const modeBtn = document.createElement('button')
   modeBtn.className = 'pv-btn'
   modeBtn.type = 'button'
+  const editorBtn = document.createElement('button')
+  editorBtn.className = 'pv-btn'
+  editorBtn.type = 'button'
+  editorBtn.title = '用外部编辑器打开'
+  editorBtn.setAttribute('aria-label', '用外部编辑器打开')
+  editorBtn.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none"><path d="M9.5 2.5h4v4M13.5 2.5 7 9M13 9.5v3a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   const collapseBtn = document.createElement('button')
   collapseBtn.className = 'pv-btn'
   collapseBtn.type = 'button'
   collapseBtn.title = '折叠预览面板'
   collapseBtn.setAttribute('aria-label', '折叠预览面板')
   collapseBtn.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  header.append(title, modeBtn, collapseBtn)
+  header.append(title, modeBtn, editorBtn, collapseBtn)
 
   const files = document.createElement('div')
   files.className = 'pv-files'
@@ -260,6 +266,11 @@ export async function mountPreview(root: HTMLElement): Promise<void> {
   /** edit 条目的视图模式（read 条目恒 file）。 */
   let mode: 'diff' | 'file' = 'diff'
   let loadSeq = 0
+
+  editorBtn.onclick = () => {
+    if (selected === null) return
+    void bridge.previewOpenEditor(selected)
+  }
 
   const entries: PreviewEntry[] = []
   const upsert = (entry: PreviewEntry): void => {

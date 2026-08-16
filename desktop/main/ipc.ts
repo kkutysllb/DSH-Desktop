@@ -14,7 +14,7 @@ import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './u
 import { communityPlugins, installedPlugins, runPluginCommand } from './plugins'
 import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
 import { terminalPanel, terminalTheme } from './terminal-panel'
-import { previewPanel } from './preview-panel'
+import { previewPanel, openInEditor } from './preview-panel'
 import { fileActivity } from './file-activity'
 import { readFile, stat } from 'node:fs/promises'
 import type { UpstreamProgress, PreviewFileContent } from '@shared/ipc-contract'
@@ -134,9 +134,17 @@ export function registerIpc(): void {
     previewPanel.adjustWidth(dx)
     return previewPanel.width()
   })
-  // 活动流转发（面板视图按需消费；隐藏时视图仍在，重开即回）
+  ipcMain.handle('preview:open-editor', (_event, path: string) => {
+    if (typeof path !== 'string' || path === '') return { ok: false, error: '无效路径' }
+    return openInEditor(path)
+  })
+  // 活动流转发（面板视图按需消费；隐藏时视图仍在，重开即回）；
+  // edit 活动同时推给 shell 页面补正文文件链接的 +n/−n 徽章
   fileActivity.on('activity', (entry) => {
     previewPanel.forwardActivity(entry, false)
+    if (entry.kind === 'edit') {
+      previewPanel.pushFileStat(entry.path, entry.added, entry.removed)
+    }
   })
 
   /* ---- 事件广播（面板窗口存在才有听众） ---- */

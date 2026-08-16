@@ -23,6 +23,7 @@
 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { spawn, spawnSync } from 'node:child_process'
 import { WebContentsView, type BrowserWindow } from 'electron'
 import { consoleMessageText } from './console-channel'
 import { getSettings, saveSettings } from './store'
@@ -160,6 +161,13 @@ const PAGE_JS = `(() => {
             status: 200, headers: { 'content-type': 'application/json' },
           })
         }
+        if (m === 'session.history' || m === 'subagent.history') {
+          // 历史会话活动补拉：上报 sessionId，主进程自己发同一 RPC
+          // （diff 内容可能很大，不走 console 通道），请求本身放行
+          const sid = rpc != null && rpc.payload != null && typeof rpc.payload === 'object'
+            && typeof rpc.payload.sessionId === 'string' ? rpc.payload.sessionId : null
+          if (sid !== null) report({ action: 'session', sessionId: sid })
+        }
         return origFetch(input, init)
       }).catch(() => origFetch(input, init))
     } catch { return origFetch(input, init) }
@@ -214,6 +222,87 @@ const PAGE_JS = `(() => {
       else el.style.removeProperty('padding-right')
     }
   }
+
+  /* ---- 正文文件链接：类型徽章 + 高亮 + edit +n/−n ----
+   * 目标：工具卡片文件路径按钮（scoped 类名含 _fileLink 子串，文本即
+   * 路径）与正文文件 mention（_fileMention）——两个类名全仓唯一，
+   * 按「_+类名」子串匹配对 hash 位置无感（dsh 即时编译产物 hash 在前
+   * （_96PAOq_fileLink），vite build 产物 hash 在后，均能命中）。
+   * React 只管理首文本节点（单字符串 children 走 nodeValue 更新），
+   * 前置徽章 span 与 dataset 属性不受意；行重挂会重建按钮，
+   * MutationObserver 重扫补回。 */
+  const fbStyle = document.createElement('style')
+  fbStyle.id = '__dsh_desktop_filebadge_style'
+  fbStyle.textContent = [
+    '[class*="_fileLink"], [class*="_fileMention"] { color: #2F6FED !important; font-weight: 500; }',
+    'body[data-ds-dark-theme] [class*="_fileLink"], body[data-ds-dark-theme] [class*="_fileMention"] { color: #7C9BFF !important; }',
+    '.__dsh-fb { display: inline-block; margin-right: 5px; padding: 1px 4px; border-radius: 4px; font: 600 9px/1.4 ui-monospace, Menlo, monospace; letter-spacing: .3px; background: rgba(47,111,237,.12); color: #2F6FED; vertical-align: .5px; }',
+    'body[data-ds-dark-theme] .__dsh-fb { background: rgba(124,155,255,.16); color: #7C9BFF; }',
+    '.__dsh-fb-stat { display: inline-block; margin-left: 6px; font: 500 10px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }',
+    '.__dsh-fb-stat .a { color: #1A7F37; }',
+    'body[data-ds-dark-theme] .__dsh-fb-stat .a { color: #3FB950; }',
+    '.__dsh-fb-stat .d { color: #CF222E; margin-left: 3px; }',
+    'body[data-ds-dark-theme] .__dsh-fb-stat .d { color: #F85149; }',
+  ].join('')
+  document.head.append(fbStyle)
+
+  const FB_EXTS = {
+    ts: 'TS', tsx: 'TSX', mts: 'TS', cts: 'TS',
+    js: 'JS', jsx: 'JSX', mjs: 'JS', cjs: 'JS',
+    json: 'JSON', css: 'CSS', scss: 'SCSS', less: 'LESS',
+    html: 'HTML', xml: 'XML', svg: 'SVG', md: 'MD',
+    py: 'PY', rb: 'RB', go: 'GO', rs: 'RS', java: 'JAVA',
+    c: 'C', h: 'H', cpp: 'C++', cc: 'C++', hpp: 'C++', cs: 'C#',
+    swift: 'SWIFT', kt: 'KT', sh: 'SH', zsh: 'SH',
+    yml: 'YAML', yaml: 'YAML', toml: 'TOML', sql: 'SQL', lua: 'LUA', php: 'PHP',
+  }
+  const statCache = new Map() /* basename(lower) -> {a, d} */
+  const baseOf = (p) => { const parts = String(p).split('/'); return parts[parts.length - 1].toLowerCase() }
+  const extOf = (text) => { const m = /\.([A-Za-z0-9]{1,5})\s*$/.exec(text); return m !== null ? m[1].toLowerCase() : null }
+  const applyStat = (btn, stat) => {
+    let el = btn.querySelector('.__dsh-fb-stat')
+    if (stat === null) { if (el !== null) el.remove(); return }
+    if (el === null) { el = document.createElement('span'); el.className = '__dsh-fb-stat'; btn.append(el) }
+    el.replaceChildren()
+    const a = document.createElement('span'); a.className = 'a'; a.textContent = '+' + stat.a
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = '\u2212' + stat.d
+    el.append(a, d)
+  }
+  const fbScan = () => {
+    const targets = document.querySelectorAll('[class*="_fileLink"], [class*="_fileMention"]')
+    for (const btn of targets) {
+      const text = (btn.textContent || '').trim()
+      if (btn.dataset.dshfb !== '1') {
+        // 首见：记录原始 basename（后续 textContent 含徽章文本，不可重提）
+        btn.dataset.dshname = baseOf(text)
+        const ext = extOf(text)
+        if (ext !== null && FB_EXTS[ext] !== undefined) {
+          const b = document.createElement('span')
+          b.className = '__dsh-fb'
+          b.textContent = FB_EXTS[ext]
+          btn.insertBefore(b, btn.firstChild)
+        }
+        btn.dataset.dshfb = '1'
+      }
+      if (btn.dataset.dshname !== undefined) {
+        applyStat(btn, statCache.get(btn.dataset.dshname) ?? null)
+      }
+    }
+  }
+  window.__dshFileStat = (path, added, removed) => {
+    statCache.set(baseOf(path), { a: added, d: removed })
+    fbScan()
+  }
+  let fbDebounce = 0
+  const fbObserve = () => {
+    new MutationObserver(() => {
+      clearTimeout(fbDebounce)
+      fbDebounce = setTimeout(fbScan, 300)
+    }).observe(document.body, { childList: true, subtree: true })
+    fbScan()
+  }
+  if (document.body) fbObserve()
+  else document.addEventListener('DOMContentLoaded', () => fbObserve(), { once: true })
 })()`
 
 /** 让位 padding 注入（面板宽度变化时随布局执行）。 */
@@ -243,6 +332,10 @@ class PreviewPanel {
       if (!message.startsWith(PREVIEW_PREFIX)) return
       let payload: Record<string, unknown>
       try { payload = JSON.parse(message.slice(PREVIEW_PREFIX.length)) as Record<string, unknown> } catch { return }
+      if (typeof payload.probe === 'string') {
+        console.log(`[preview-probe] ${message.slice(PREVIEW_PREFIX.length)}`)
+        return
+      }
       const sidebar = payload.sidebar
       if (typeof sidebar === 'number' && sidebar >= 0) {
         this.sidebarW = Math.round(sidebar)
@@ -268,6 +361,12 @@ class PreviewPanel {
           this.show()
           this.forwardActivity(entry, true)
         }
+        return
+      }
+      if (payload.action === 'session') {
+        // 页面打开/切换会话：主进程补拉该会话历史的活动（含 diff）
+        const sid = typeof payload.sessionId === 'string' && payload.sessionId !== '' ? payload.sessionId : null
+        if (sid !== null) void fileActivity.fetchHistory(sid)
       }
     }
     const onDidLoad = (): void => {
@@ -279,6 +378,8 @@ class PreviewPanel {
         webContents.executeJavaScript(padScript(this.panelW), true).catch(() => {})
         this.syncButtonState()
       }
+      // 正文文件徽章：历史活动的 +n/−n 补推（页面脚本就绪后全量回放）
+      this.pushAllStats()
     }
     webContents.on('console-message', onConsole)
     webContents.on('did-finish-load', onDidLoad)
@@ -360,6 +461,23 @@ class PreviewPanel {
     if (wc !== undefined && !wc.isDestroyed()) wc.send('preview:activity', entry, focus)
   }
 
+  /** 正文文件徽章：向 shell 页面推送 edit 增删行数（页面脚本补 +n/−n）。 */
+  pushFileStat(path: string, added: number, removed: number): void {
+    const wc = this.win?.webContents
+    if (wc === undefined || wc.isDestroyed()) return
+    wc.executeJavaScript(
+      `window.__dshFileStat && window.__dshFileStat(${JSON.stringify(path)}, ${String(added)}, ${String(removed)})`,
+      true,
+    ).catch(() => {})
+  }
+
+  /** 全量回放（页面加载后：会话恢复的历史消息也能拿到最近 stat）。 */
+  pushAllStats(): void {
+    for (const e of fileActivity.list()) {
+      if (e.kind === 'edit') this.pushFileStat(e.path, e.added, e.removed)
+    }
+  }
+
   /** 请求重排（外部布局联动；面板可见才重算）。 */
   relayout(): void {
     if (this.visible) this.layout()
@@ -409,6 +527,55 @@ class PreviewPanel {
 
 function clampW(w: number): number {
   return Math.min(PANEL_MAX_W, Math.max(PANEL_MIN_W, Math.round(w)))
+}
+
+/** 外部编辑器 CLI 探测结果（undefined = 未探测，null = 无可用）。 */
+let editorCli: string | null | undefined
+
+/** 探测可用的代码编辑器 CLI（首调探测后缓存；which/where 同步探测）。 */
+function detectEditor(): string | null {
+  if (editorCli !== undefined) return editorCli
+  const candidates = process.platform === 'win32'
+    ? ['code.cmd', 'code']
+    : ['code', 'cursor', 'zed', 'subl', 'xed']
+  const probe = process.platform === 'win32' ? 'where' : 'which'
+  for (const cli of candidates) {
+    const found = spawnSync(probe, [cli], { encoding: 'utf8' }).status === 0
+    if (found) {
+      editorCli = cli
+      return cli
+    }
+  }
+  editorCli = null
+  return null
+}
+
+/**
+ * 用外部代码编辑器打开文件（探测链 code/cursor/zed/subl/xed，都没有
+ * 回退系统文本编辑器——不用 shell.openPath：那是默认应用，.ts 会被
+ * 视频播放器抢注）。结果回执给面板视图。
+ */
+export function openInEditor(path: string): { ok: boolean; error: string | null } {
+  try {
+    const cli = detectEditor()
+    if (cli !== null) {
+      spawn(cli, [path], { detached: true, stdio: 'ignore' }).unref()
+      return { ok: true, error: null }
+    }
+    if (process.platform === 'darwin') {
+      // 无编辑器 CLI：默认文本编辑器（TextEdit）仍优于误唤视频播放器
+      spawn('open', ['-t', path], { detached: true, stdio: 'ignore' }).unref()
+      return { ok: true, error: null }
+    }
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', '/b', path], { detached: true, stdio: 'ignore', shell: false }).unref()
+      return { ok: true, error: null }
+    }
+    spawn('xdg-open', [path], { detached: true, stdio: 'ignore' }).unref()
+    return { ok: true, error: null }
+  } catch (error) {
+    return { ok: false, error: String(error) }
+  }
 }
 
 /** 全局单例（应用级：活动记录在 file-activity，跨窗口存续）。 */

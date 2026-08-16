@@ -44,6 +44,7 @@ const bridge: DesktopBridge = {
   previewReadFile: (path) => ipcRenderer.invoke('preview:read-file', path),
   previewHide: () => ipcRenderer.invoke('preview:hide'),
   previewPanelResize: (dx) => ipcRenderer.invoke('preview:panel-resize', dx),
+  previewOpenEditor: (path) => ipcRenderer.invoke('preview:open-editor', path),
   onDshStateChanged: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
     ipcRenderer.on('dsh:state-changed', listener)

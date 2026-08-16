@@ -233,6 +233,8 @@ export interface DesktopBridge {
   previewHide(): Promise<void>
   /** 拖左缘调宽度（dx 向左为正 = 变宽），返回新宽度。 */
   previewPanelResize(dx: number): Promise<number>
+  /** 用外部代码编辑器打开当前预览文件（探测 code/cursor/zed…）。 */
+  previewOpenEditor(path: string): Promise<{ ok: boolean; error: string | null }>
   onPreviewActivity(cb: (e: PreviewEntry, focus: boolean) => void): () => void
   /* 事件订阅（返回退订函数） */
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
