@@ -15,11 +15,14 @@ import { installMenu, installTray, wireMenuRefresh } from './menu'
 import { closePanels, showBootstrap, showShellWindow } from './windows'
 import { upstreamBuilt, upstreamCloned } from './dsh-contract'
 import { initUpdater } from './updater'
+import { applyNativeTheme, currentThemePref } from './theme-watcher'
 
 /** splash 窗口引用（切到 shell 后关闭）。 */
 let bootstrap: Electron.BrowserWindow | null = null
 
 app.whenReady().then(() => {
+  // 预置上次已知主题：原生标题栏/菜单栏在首个窗口出现前就对色
+  applyNativeTheme(currentThemePref())
   registerIpc()
   installMenu()
   installTray()

@@ -17,11 +17,14 @@ export interface DesktopSettings {
   windowBounds: { x: number; y: number; width: number; height: number } | null
   /** 关闭主窗口时是否最小化到托盘（false = 直接退出 dsh 与应用）。 */
   keepRunningInTray: boolean
+  /** 上游 Web UI 最后已知的渲染主题（用于启动时预置原生外观，避免闪烁）。 */
+  lastTheme: 'system' | 'light' | 'dark'
 }
 
 const DEFAULTS: DesktopSettings = {
   windowBounds: null,
   keepRunningInTray: true,
+  lastTheme: 'system',
 }
 
 let cache: DesktopSettings | null = null

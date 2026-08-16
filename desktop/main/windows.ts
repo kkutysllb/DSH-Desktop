@@ -15,6 +15,7 @@ import { resolveAsset } from './dsh-contract'
 import { dshManager } from './dsh-manager'
 import { installUpdate } from './updater'
 import { attachUpdateInjector } from './update-injector'
+import { attachThemeWatcher, themeBackgroundColor, SHELL_TITLEBAR_HEIGHT } from './theme-watcher'
 import { getSettings, saveSettings } from './store'
 
 /** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
@@ -47,6 +48,17 @@ export function showShellWindow(dshUrl: string): void {
       minHeight: 600,
       show: false,
       title: 'DSH Desktop',
+      // 按上次已知主题设底色，页面加载期间不白闪/黑闪
+      backgroundColor: themeBackgroundColor(),
+      // macOS：隐藏系统标题栏（其颜色由系统材质绘制、backgroundColor
+      // 无法控制），改用 WCO 覆盖条——颜色取上游 token，与主界面无缝；
+      // 页面由 theme-watcher 注入等高 padding 下移，不被遮挡
+      ...(process.platform === 'darwin'
+        ? {
+            titleBarStyle: 'hidden' as const,
+            titleBarOverlay: { color: themeBackgroundColor(), height: SHELL_TITLEBAR_HEIGHT },
+          }
+        : {}),
       // 官方 DeepSeek 图标（macOS 用 Dock 图标，此项服务 Linux/Windows）
       icon: resolveAsset('icon.png'),
       // 纯浏览器载体：无 node、无 preload、webSecurity 开启
@@ -61,6 +73,8 @@ export function showShellWindow(dshUrl: string): void {
     shellWindow.on('moved', persistBounds)
     // 更新下载完成后：侧边栏 logo 旁出现安装按钮（注入器零侵入上游）
     attachUpdateInjector(shellWindow)
+    // 主题跟随：上游 UI 主题切换 → 原生标题栏/菜单栏自适应（零侵入）
+    attachThemeWatcher(shellWindow)
     // 只允许停留在 dsh 回环地址；外链交给系统浏览器
     shellWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('dsh-desktop:')) return { action: 'deny' }
@@ -115,6 +129,7 @@ export function openPanel(panel: 'setup' | 'diagnostics' | 'sync' | 'plugins', t
     title,
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: themeBackgroundColor(),
     icon: resolveAsset('icon.png'),
     webPreferences: {
       preload: PRELOAD,
@@ -144,6 +159,7 @@ export function showBootstrap(route: 'splash' | 'setup'): BrowserWindow {
     resizable: false,
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: themeBackgroundColor(),
     icon: resolveAsset('icon.png'),
     webPreferences: {
       preload: PRELOAD,

@@ -1,8 +1,10 @@
-/* DSH Desktop 桌面壳样式：跟随系统深浅色，克制、原生感 */
+/* DSH Desktop 桌面壳样式：跟随系统深浅色，克制、原生感。
+   深色底色取上游 design-platform token（neutral-bluish-900/850/750），
+   与主界面无缝。 */
 
 :root {
   color-scheme: light dark;
-  --bg: #f5f6f8;
+  --bg: #f9fafb; /* dsw neutral-bluish-50 */
   --panel: #ffffff;
   --text: #1a1d21;
   --muted: #5f6672;
@@ -16,11 +18,11 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14171b;
-    --panel: #1d2127;
+    --bg: #1b1b1c; /* dsw neutral-bluish-900（sidebar-fill） */
+    --panel: #2c2c2e; /* dsw neutral-bluish-850 */
     --text: #e8eaed;
     --muted: #9aa1ac;
-    --border: #2c313a;
+    --border: #43454a; /* dsw neutral-bluish-750 */
     --accent: #5b8cff;
     --danger: #e06c6c;
     --ok: #52b788;
