@@ -306,7 +306,7 @@ class TerminalPanel {
       void this.view.webContents.loadURL(url)
     }
     this.view.setVisible(true)
-    this.pty.ensure(this.workspacePath)
+    this.pty.ensureFirst(this.workspacePath)
     this.layout()
     this.syncButtonState()
     // 焦点给终端（打开即可打字）
@@ -381,14 +381,14 @@ class TerminalPanel {
     }
   }
 
-  private readonly onPtyData = (chunk: string): void => {
+  private readonly onPtyData = (chunk: string, id: number): void => {
     const wc = this.view?.webContents
-    if (wc !== undefined && !wc.isDestroyed()) wc.send('terminal:data', chunk)
+    if (wc !== undefined && !wc.isDestroyed()) wc.send('terminal:data', chunk, id)
   }
 
-  private readonly onPtyExit = (): void => {
+  private readonly onPtyExit = (id: number): void => {
     const wc = this.view?.webContents
-    if (wc !== undefined && !wc.isDestroyed()) wc.send('terminal:exit', undefined)
+    if (wc !== undefined && !wc.isDestroyed()) wc.send('terminal:exit', id)
   }
 
   private destroyView(): void {

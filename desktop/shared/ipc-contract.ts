@@ -141,11 +141,12 @@ export interface TerminalTheme {
   accent: string
 }
 
-/** pty 会话快照（terminal:info 拉取）。 */
-export interface TerminalInfo {
+/** pty 会话快照（terminal:tabs / terminal:new 拉取）：一个标签 = 一个 shell。 */
+export interface TerminalTab {
+  id: number
   alive: boolean
   cwd: string
-  /** shell 名（zsh/bash/powershell，header 显示用）。 */
+  /** shell 名（zsh/bash/powershell，tab/header 显示用）。 */
   title: string
 }
 
@@ -174,23 +175,31 @@ export interface DesktopBridge {
   pluginAdd(pkg: string): Promise<PluginCommandResult>
   pluginRemove(pkg: string): Promise<PluginCommandResult>
   pluginUpdate(pkg: string): Promise<PluginCommandResult>
-  /* 内嵌终端（shell 窗口底部面板） */
-  terminalWrite(data: string): Promise<void>
-  terminalResize(cols: number, rows: number): Promise<void>
-  /** 销毁并以当前工作区目录重建 shell。 */
-  terminalRestart(): Promise<TerminalInfo>
-  /** 关闭面板（pty 保留，会话不丢）。 */
+  /* 内嵌终端（shell 窗口底部面板，多标签） */
+  /** 全部标签快照（面板初次挂载时拉取）。 */
+  terminalTabs(): Promise<TerminalTab[]>
+  /** 新建标签（工作目录 = 当前工作区），返回新标签。 */
+  terminalNew(): Promise<TerminalTab>
+  terminalWrite(id: number, data: string): Promise<void>
+  terminalResize(id: number, cols: number, rows: number): Promise<void>
+  /** 销毁对应标签并以当前工作区目录重建 shell。 */
+  terminalRestartTab(id: number): Promise<TerminalTab | null>
+  /** 关闭单个标签（杀 shell），返回剩余标签（空 = 全部关闭）。 */
+  terminalClose(id: number): Promise<TerminalTab[]>
+  /** 关闭面板（pty 全部保留，会话不丢）。 */
   terminalHide(): Promise<void>
   /** 拖拽面板上缘调高度（dy 向下为正），返回新高度。 */
   terminalPanelResize(dy: number): Promise<number>
-  terminalInfo(): Promise<TerminalInfo>
   terminalTheme(): Promise<TerminalTheme>
+  /* 剪贴板（终端右键菜单用；主进程 electron.clipboard 无权限问题） */
+  clipboardReadText(): Promise<string>
+  clipboardWriteText(text: string): Promise<void>
   /* 事件订阅（返回退订函数） */
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
   onDshLog(cb: (l: DshLogLine) => void): () => void
   onUpstreamProgress(cb: (p: UpstreamProgress) => void): () => void
   onUpdateStateChanged(cb: (s: UpdateStatus) => void): () => void
-  onTerminalData(cb: (chunk: string) => void): () => void
-  onTerminalExit(cb: () => void): () => void
+  onTerminalData(cb: (chunk: string, id: number) => void): () => void
+  onTerminalExit(cb: (id: number) => void): () => void
   onTerminalTheme(cb: (t: TerminalTheme) => void): () => void
 }

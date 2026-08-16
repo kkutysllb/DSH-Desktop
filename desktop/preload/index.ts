@@ -29,13 +29,17 @@ const bridge: DesktopBridge = {
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
   showShell: () => ipcRenderer.invoke('shell:show'),
-  terminalWrite: (data) => ipcRenderer.invoke('terminal:write', data),
-  terminalResize: (cols, rows) => ipcRenderer.invoke('terminal:resize', cols, rows),
-  terminalRestart: () => ipcRenderer.invoke('terminal:restart'),
+  terminalTabs: () => ipcRenderer.invoke('terminal:tabs'),
+  terminalNew: () => ipcRenderer.invoke('terminal:new'),
+  terminalWrite: (id, data) => ipcRenderer.invoke('terminal:write', id, data),
+  terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+  terminalRestartTab: (id) => ipcRenderer.invoke('terminal:restart', id),
+  terminalClose: (id) => ipcRenderer.invoke('terminal:close', id),
   terminalHide: () => ipcRenderer.invoke('terminal:hide'),
   terminalPanelResize: (dy) => ipcRenderer.invoke('terminal:panel-resize', dy),
-  terminalInfo: () => ipcRenderer.invoke('terminal:info'),
   terminalTheme: () => ipcRenderer.invoke('terminal:theme'),
+  clipboardReadText: () => ipcRenderer.invoke('clipboard:read'),
+  clipboardWriteText: (text) => ipcRenderer.invoke('clipboard:write', text),
   onDshStateChanged: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
     ipcRenderer.on('dsh:state-changed', listener)
@@ -57,12 +61,12 @@ const bridge: DesktopBridge = {
     return () => ipcRenderer.removeListener('update:state-changed', listener)
   },
   onTerminalData: (cb) => {
-    const listener = (_e: Electron.IpcRendererEvent, chunk: string): void => cb(chunk)
+    const listener = (_e: Electron.IpcRendererEvent, chunk: string, id: number): void => cb(chunk, id)
     ipcRenderer.on('terminal:data', listener)
     return () => ipcRenderer.removeListener('terminal:data', listener)
   },
   onTerminalExit: (cb) => {
-    const listener = (): void => cb()
+    const listener = (_e: Electron.IpcRendererEvent, id: number): void => cb(id)
     ipcRenderer.on('terminal:exit', listener)
     return () => ipcRenderer.removeListener('terminal:exit', listener)
   },

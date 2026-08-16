@@ -7,7 +7,7 @@
  * @module desktop/main/ipc
  */
 
-import { BrowserWindow, ipcMain, shell } from 'electron'
+import { BrowserWindow, clipboard, ipcMain, shell } from 'electron'
 import { showShellWindow } from './windows'
 import { dshManager } from './dsh-manager'
 import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './upstream'
@@ -71,26 +71,39 @@ export function registerIpc(): void {
     return Promise.resolve()
   })
 
-  /* ---- 内嵌终端（面板视图 ↔ pty） ---- */
-  ipcMain.handle('terminal:write', (_event, data: string) => {
-    terminalPanel.ptyHost().write(data)
-  })
-  ipcMain.handle('terminal:resize', (_event, cols: number, rows: number) => {
-    terminalPanel.ptyHost().resize(cols, rows)
-  })
-  ipcMain.handle('terminal:restart', () => {
+  /* ---- 内嵌终端（面板视图 ↔ pty，多标签：全部动作常 id） ---- */
+  ipcMain.handle('terminal:tabs', () => terminalPanel.ptyHost().list())
+  ipcMain.handle('terminal:new', () => {
     const ws = terminalPanel.currentWorkspace()
-    terminalPanel.ptyHost().restart(ws.path)
-    return terminalPanel.ptyHost().info()
+    return terminalPanel.ptyHost().create(ws.path)
+  })
+  ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
+    terminalPanel.ptyHost().write(id, data)
+  })
+  ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: number) => {
+    terminalPanel.ptyHost().resize(id, cols, rows)
+  })
+  ipcMain.handle('terminal:restart', (_event, id: number) => {
+    const ws = terminalPanel.currentWorkspace()
+    return terminalPanel.ptyHost().restart(id, ws.path)
+  })
+  ipcMain.handle('terminal:close', (_event, id: number) => {
+    return terminalPanel.ptyHost().close(id)
   })
   ipcMain.handle('terminal:hide', () => {
     terminalPanel.hide()
   })
-  ipcMain.handle('terminal:info', () => terminalPanel.ptyHost().info())
   ipcMain.handle('terminal:theme', () => terminalTheme())
   ipcMain.handle('terminal:panel-resize', (_event, dy: number) => {
     terminalPanel.adjustHeight(dy)
     return terminalPanel.height()
+  })
+
+  /* ---- 剪贴板（终端右键菜单复制/粘贴） ---- */
+  ipcMain.handle('clipboard:read', () => clipboard.readText())
+  ipcMain.handle('clipboard:write', (_event, text: string) => {
+    clipboard.writeText(text)
+    return Promise.resolve()
   })
 
   /* ---- 事件广播（面板窗口存在才有听众） ---- */
