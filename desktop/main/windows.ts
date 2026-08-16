@@ -16,6 +16,7 @@ import { dshManager } from './dsh-manager'
 import { installUpdate } from './updater'
 import { attachUpdateInjector } from './update-injector'
 import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
+import { attachStyleOverlay } from './style-overlay'
 import { terminalPanel } from './terminal-panel'
 import { getSettings, saveSettings } from './store'
 
@@ -78,6 +79,8 @@ export function showShellWindow(dshUrl: string): void {
     attachUpdateInjector(shellWindow)
     // 主题跟随：上游 UI 主题切换 → 原生标题栏/菜单栏自适应（零侵入）
     attachThemeWatcher(shellWindow)
+    // 消息样式覆盖层：排版 token/气泡/代码块微调（零侵入，token 改名静默失效）
+    attachStyleOverlay(shellWindow)
     // 内嵌终端面板：底部真实终端（pty + xterm），页面探针/按钮注入
     // （按钮宿主是自绘标题栏，仅 darwin）
     if (process.platform === 'darwin') terminalPanel.attach(shellWindow)
