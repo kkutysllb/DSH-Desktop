@@ -94,6 +94,39 @@ export interface PluginCommandResult {
   output: string
 }
 
+/* ---------- 应用自动更新 ---------- */
+
+/**
+ * 自动更新状态机。
+ * - idle：初始（未检查）；checking：检测中
+ * - unavailable：已是最新；available：发现新版本（即将/正在后台下载）
+ * - downloading：后台下载中（progress 有值）；downloaded：下载完成，待用户触发安装
+ * - installing：正在退出并安装（终态，随后进程被替换重启）
+ * - error：检测或下载失败（error 有值）
+ */
+export type UpdateState =
+  | 'idle'
+  | 'checking'
+  | 'unavailable'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'installing'
+  | 'error'
+
+/** 更新状态快照，随 `update:state-changed` 广播，也可 `update:status` 拉取。 */
+export interface UpdateStatus {
+  state: UpdateState
+  /** 当前运行版本（app 版本）。 */
+  currentVersion: string
+  /** 检测到的可用新版本（available 及之后有值）。 */
+  availableVersion: string | null
+  /** 下载进度 0–100（downloading 时有值）。 */
+  progress: number | null
+  /** 最近一次错误（state=error 时有值）。 */
+  error: string | null
+}
+
 /* ---------- preload 暴露面 ---------- */
 
 /** preload 通过 contextBridge 暴露的 `window.dshDesktop`。 */
@@ -107,6 +140,9 @@ export interface DesktopBridge {
   /* 动作 */
   dshStart(): Promise<DshStatus>
   dshRestart(): Promise<DshStatus>
+  updateCheck(): Promise<UpdateStatus>
+  updateInstall(): Promise<UpdateStatus>
+  updateStatus(): Promise<UpdateStatus>
   openExternal(url: string): Promise<void>
   revealPath(path: string): Promise<void>
   upstreamSync(): Promise<{ ok: boolean; error: string | null }>
@@ -118,4 +154,5 @@ export interface DesktopBridge {
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
   onDshLog(cb: (l: DshLogLine) => void): () => void
   onUpstreamProgress(cb: (p: UpstreamProgress) => void): () => void
+  onUpdateStateChanged(cb: (s: UpdateStatus) => void): () => void
 }

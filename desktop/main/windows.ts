@@ -12,6 +12,9 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { BrowserWindow, shell } from 'electron'
 import { resolveAsset } from './dsh-contract'
+import { dshManager } from './dsh-manager'
+import { installUpdate } from './updater'
+import { attachUpdateInjector } from './update-injector'
 import { getSettings, saveSettings } from './store'
 
 /** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
@@ -56,13 +59,24 @@ export function showShellWindow(dshUrl: string): void {
     shellWindow.once('ready-to-show', () => shellWindow?.show())
     shellWindow.on('resized', persistBounds)
     shellWindow.on('moved', persistBounds)
+    // 更新下载完成后：侧边栏 logo 旁出现安装按钮（注入器零侵入上游）
+    attachUpdateInjector(shellWindow)
     // 只允许停留在 dsh 回环地址；外链交给系统浏览器
     shellWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('dsh-desktop:')) return { action: 'deny' }
       void shell.openExternal(url)
       return { action: 'deny' }
     })
     shellWindow.webContents.on('will-navigate', (event, url) => {
-      if (!url.startsWith(dshUrl)) {
+      // 安装按钮的回调协议：拦下并触发安装，绝不真正导航
+      if (url.startsWith('dsh-desktop:')) {
+        event.preventDefault()
+        if (url === 'dsh-desktop://install-update') void installUpdate()
+        return
+      }
+      // 实时取当前 dsh 地址（dsh 重启端口会变，不能用创建时的闭包值）
+      const current = dshManager.status.url ?? dshUrl
+      if (!url.startsWith(current)) {
         event.preventDefault()
         void shell.openExternal(url)
       }

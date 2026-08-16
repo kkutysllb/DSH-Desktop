@@ -12,6 +12,7 @@ import { showShellWindow } from './windows'
 import { dshManager } from './dsh-manager'
 import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './upstream'
 import { communityPlugins, installedPlugins, runPluginCommand } from './plugins'
+import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
 import type { UpstreamProgress } from '@shared/ipc-contract'
 
 /** 安装全部 IPC 处理器与事件桥。 */
@@ -47,6 +48,11 @@ export function registerIpc(): void {
   ipcMain.handle('plugins:remove', (_event, pkg: string) => runPluginCommand(['remove', pkg]))
   ipcMain.handle('plugins:update', (_event, pkg: string) => runPluginCommand(['update', pkg]))
 
+  /* ---- 应用自动更新 ---- */
+  ipcMain.handle('update:status', () => updateStatus())
+  ipcMain.handle('update:check', () => checkForUpdates())
+  ipcMain.handle('update:install', () => installUpdate())
+
   /* ---- 桌面动作 ---- */
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
@@ -71,6 +77,11 @@ export function registerIpc(): void {
   progressEvents.on('progress', (progress: UpstreamProgress) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('upstream:progress', progress)
+    }
+  })
+  updateEvents.on('state-changed', (status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('update:state-changed', status)
     }
   })
 }

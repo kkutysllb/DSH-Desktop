@@ -11,9 +11,10 @@
 import { app } from 'electron'
 import { dshManager } from './dsh-manager'
 import { registerIpc } from './ipc'
-import { installMenu, installTray } from './menu'
+import { installMenu, installTray, wireMenuRefresh } from './menu'
 import { closePanels, showBootstrap, showShellWindow } from './windows'
 import { upstreamBuilt, upstreamCloned } from './dsh-contract'
+import { initUpdater } from './updater'
 
 /** splash 窗口引用（切到 shell 后关闭）。 */
 let bootstrap: Electron.BrowserWindow | null = null
@@ -22,6 +23,8 @@ app.whenReady().then(() => {
   registerIpc()
   installMenu()
   installTray()
+  wireMenuRefresh() // dsh/更新状态变化 → 重建菜单与托盘
+  initUpdater() // 自动更新：启动后静默检测，下载完成侧边栏出现安装按钮
 
   // 启动即显示 splash：任何后续状态都在可见反馈中发生
   bootstrap = showBootstrap('splash')

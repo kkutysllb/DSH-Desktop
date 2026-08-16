@@ -25,6 +25,9 @@ const bridge: DesktopBridge = {
   pluginUpdate: (pkg) => ipcRenderer.invoke('plugins:update', pkg),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   revealPath: (path) => ipcRenderer.invoke('shell:revealPath', path),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
   onDshStateChanged: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
     ipcRenderer.on('dsh:state-changed', listener)
@@ -39,6 +42,11 @@ const bridge: DesktopBridge = {
     const listener = (_e: Electron.IpcRendererEvent, p: Parameters<typeof cb>[0]): void => cb(p)
     ipcRenderer.on('upstream:progress', listener)
     return () => ipcRenderer.removeListener('upstream:progress', listener)
+  },
+  onUpdateStateChanged: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: Parameters<typeof cb>[0]): void => cb(s)
+    ipcRenderer.on('update:state-changed', listener)
+    return () => ipcRenderer.removeListener('update:state-changed', listener)
   },
 }
 

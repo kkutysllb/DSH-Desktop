@@ -86,7 +86,24 @@ deepseek-harness/    # 上游克隆（.gitignore 排除，绝不提交、绝不�
 - 已装插件 = profile 层叠（`~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles`）。
 - 安装/卸载/更新直接转发上游 CLI：`dsh plugin --profile web add|remove|update <pkg>`（pnpm 转发器，声明 `dsh.bundle` 的包自动入栈）。
 - 社区发现：GitHub Search API（`topic:dsh-plugin`），5 分钟内存缓存规避限额。
-- 插件变更属于 profile 组合（启动时组装的插件树），面板提供"重启 dsh 生效"。
+- 插件变更属于 profile 组合（启动时组装的插件树），面板提供“重启 dsh 生效”。
+
+### 自动更新（electron-updater + GitHub Releases）
+
+发布源为本仓库的 GitHub Releases（`electron-builder.yml` 的 `publish` 配置）；发布新版本：`pnpm dist` 产出 dmg/zip 后上传 Release（或 `GH_TOKEN=… pnpm dist --publish always`）。行为：
+
+1. 启动后 8s 静默检测新版本（仅打包版；开发模式在诊断面板提示不支持）；
+2. 发现新版本 → **后台默认下载**（`autoDownload`），不弹窗不打断；
+3. 下载完成 → 主窗口侧边栏 logo 旁出现安装按钮（隐藏式，平时不存在）——注入器向上上游 Web UI 的 `logoRow` 动态插入，零修改上游代码；菜单/托盘同步出现“安装更新并重启”；
+4. 用户点击 → 先优雅关停 dsh 侧车 → `quitAndInstall` 退出安装 → 自动重启新版。
+
+注入依赖上游 DOM 契约：侧边栏 `SidebarRoot.module.css` 的 `logoRow` / `collapsed` 类名（编译后哈希前缀不影响 `[class*=…]` 匹配）。上游变更后可运行：
+
+```sh
+pnpm exec electron scripts/verify-inject.cjs http://127.0.0.1:<dsh端口>
+```
+
+快速验证注入器是否仍然有效。
 
 ## 跟进上游
 
@@ -111,6 +128,7 @@ pnpm sync-upstream
 | Harness home `~/.dsh` / `DSH_HOME` | `packages/util/home-paths` |
 | 插件管理 `dsh plugin --profile <name> <pnpm args>` | `apps/cli/src/plugin.ts` |
 | Profile 层叠 `dsh.profile.bundles` | `packages/boot/app-boot/src/profile.ts` |
+| 侧边栏 `logoRow` / `collapsed` DOM 类名 | `packages/client/ui-sidebar/src/client/SidebarRoot.tsx`（`scripts/verify-inject.cjs` 可验证） |
 | Node 版本要求 `engines.node` | 根 `package.json`（不满足时自动回退 Electron 内置 node / 提示） |
 
 ### 仓库卫生

@@ -30,4 +30,9 @@ linux:
   category: Development
 win:
   target: [nsis]
-publish: null
+# 自动更新源：GitHub Releases（electron-updater 读取随包生成的 app-update.yml）
+publish:
+  provider: github
+  owner: kkutysllb
+  repo: DSH-Desktop
+  releaseType: release
