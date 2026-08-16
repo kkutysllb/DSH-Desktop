@@ -50,8 +50,13 @@ jobs:
       - name: 物化上游运行时（开箱即用的核心）
         # pnpm deploy 生产依赖闭包 → staging/dsh-runtime，
         # 再用 materialize-peers 补齐 deploy 的盲区（peer 声明 +
-        # optionalDependencies 里的平台二进制）；目标必须用绝对路径
+        # optionalDependencies 里的平台二进制）；目标必须用绝对路径。
+        # macOS 上还会签名运行时内全部 Mach-O 二进制（公证硬要求：
+        # Apple 会解开嵌套归档逐个校验）；CI 钥匙串无证书，从 p12 导入。
         timeout-minutes: 20
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PWD }}
         run: |
           pnpm --dir deepseek-harness --filter=@deepseek-ai/dsh deploy --prod --legacy "$PWD/staging/dsh-runtime"
           test -f staging/dsh-runtime/lib/bin.js

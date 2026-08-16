@@ -22,7 +22,7 @@
  * @module scripts/materialize-peers
  */
 import { execSync } from 'node:child_process'
-import { cpSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, cpSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { createGzip } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
@@ -288,6 +288,69 @@ const walk = (dir) => {
 }
 walk(staging)
 console.log(`[materialize] 瘦身：删 ${pruned} 个 .map/.d.ts`)
+
+// macOS：签名运行时内全部 Mach-O 二进制（公证硬要求）。Apple 公证
+// 会解开嵌套归档逐个校验：rg / pty.node / sharp 的 libvips dylib /
+// koffi 等 npm 原生二进制默认无 Developer ID 签名 → 整包公证 Invalid。
+// 必须在归档前完成；secure timestamp + hardened runtime 同为硬性要求。
+if (process.platform === 'darwin') {
+  const findIdentity = () => {
+    try {
+      const out = execSync('security find-identity -v -p codesigning', { encoding: 'utf8' })
+      const m = out.match(/"Developer ID Application: [^"]+"/)
+      return m === null ? null : m[0].slice(1, -1)
+    } catch {
+      return null
+    }
+  }
+  let identity = findIdentity()
+  if (identity === null && process.env.CSC_LINK !== undefined && process.env.CSC_KEY_PASSWORD !== undefined) {
+    // CI：钥匙串无证书，从 CSC_LINK（base64 p12）导入临时钥匙串
+    const kc = 'dsh-materialize.keychain-db'
+    const kcPwd = 'dsh-temp-pass'
+    const p12 = join(root, 'staging', '.cert.p12')
+    writeFileSync(p12, Buffer.from(process.env.CSC_LINK, 'base64'))
+    try { execSync(`security delete-keychain ${kc}`, { stdio: 'ignore' }) } catch { /* 不存在 */ }
+    execSync(`security create-keychain -p ${kcPwd} ${kc}`)
+    execSync(`security unlock-keychain -p ${kcPwd} ${kc}`)
+    execSync(`security import ${p12} -k ${kc} -P ${process.env.CSC_KEY_PASSWORD} -T /usr/bin/codesign`)
+    execSync(`security set-key-partition-list -S apple-tool:,apple: -k ${kcPwd} ${kc}`)
+    const list = execSync('security list-keychains -d user', { encoding: 'utf8' })
+      .trim().split('\n').map((s) => s.trim()).join(' ')
+    execSync(`security list-keychains -d user -s ${list} ${kc}`)
+    rmSync(p12, { force: true })
+    identity = findIdentity()
+  }
+  if (identity === null) {
+    console.error('[materialize] 找不到 Developer ID 签名身份（本地钥匙串或 CSC_LINK/CSC_KEY_PASSWORD）——macOS 运行时二进制无法签名，公证必失败')
+    process.exit(1)
+  }
+  // 扫描 Mach-O：读文件头 4 字节魔数（不看扩展名与执行位，最稳）
+  const MAGICS = new Set(['cffaedfe', 'cefaedfe', 'cafebabe', 'bebafeca'])
+  const bins = []
+  const scanMacho = (dir) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.name === '.DS_Store') continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) { scanMacho(p); continue }
+      if (!e.isFile()) continue
+      const fd = openSync(p, 'r')
+      try {
+        const head = Buffer.alloc(4)
+        if (readSync(fd, head, 0, 4, 0) === 4 && MAGICS.has(head.toString('hex'))) bins.push(p)
+      } finally {
+        closeSync(fd)
+      }
+    }
+  }
+  scanMacho(staging)
+  for (const b of bins) {
+    execSync(`codesign --force --timestamp --options runtime --sign "${identity}" "${b}"`, { stdio: 'ignore' })
+  }
+  console.log(`[materialize] 已签名 ${bins.length} 个运行时二进制（${identity}）`)
+}
 
 // 单文件归档：electron-builder 对数万散文件的复制/签名在 macOS 撞
 // EMFILE（文件描述符上限）；改为一个 tar.gz 进包、首启解压到 userData
