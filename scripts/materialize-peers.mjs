@@ -22,8 +22,9 @@
  * @module scripts/materialize-peers
  */
 import { execSync } from 'node:child_process'
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { createGzip } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -290,23 +291,84 @@ console.log(`[materialize] 瘦身：删 ${pruned} 个 .map/.d.ts`)
 
 // 单文件归档：electron-builder 对数万散文件的复制/签名在 macOS 撞
 // EMFILE（文件描述符上限）；改为一个 tar.gz 进包、首启解压到 userData
-// （见 dsh-contract.ts ensureBundledRuntime）。从 runtime 根内容打包，
-// 解压顶层即 lib/node_modules/package.json。.bin 内是指向已删 .pnpm 的
-// dangling 链接，运行时（直接 node lib/bin.js）用不到，一并清除。
+// （见 dsh-contract.ts ensureBundledRuntime）。纯 Node 实现（ustar +
+// GNU LongName 头，bsdtar/GNU tar 均可解）：系统 tar 在 Windows CI 上
+// status 2 失败且 stderr 不可见，不再依赖。
+// .bin 内是指向已删 .pnpm 的 dangling 链接，运行时用不到，一并清除。
 rmSync(join(topNM, '.bin'), { recursive: true, force: true })
+
+// 收集归档条目（flatten 后不应再有 symlink，遇到即 fail-fast）。
+// 点开头文件必须归档：实测 @earendil-works/pi-ai 运行时 import
+// data/.manifest.json；仅排除 .DS_Store 噪音。
+const tarFiles = []
+const collect = (dir, prefix) => {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === '.DS_Store') continue
+    const p = join(dir, e.name)
+    const rel = prefix === '' ? e.name : `${prefix}/${e.name}`
+    if (e.isDirectory()) collect(p, rel)
+    else if (e.isFile()) tarFiles.push({ rel, abs: p })
+    else if (e.isSymbolicLink()) {
+      console.error(`[materialize] 归档中止：发现残留 symlink ${p}（flatten 应已清除）`)
+      process.exit(1)
+    }
+  }
+}
+collect(staging, '')
+tarFiles.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+
+/** ustar 头（512B）：typeflag '0'=文件；name>100 字节时先出 GNU 'L' 头。 */
+function tarHeader(name, size, mtimeMs, typeflag = '0') {
+  const h = Buffer.alloc(512)
+  const oct = (off, len, v) => h.write(octal(v, len - 1), off, len, 'ascii')
+  const put = (off, len, s) => h.write(s, off, len, 'utf8')
+  put(0, 100, name.slice(0, 100))
+  oct(100, 8, 0o644)
+  oct(108, 8, 0)
+  oct(116, 8, 0)
+  oct(124, 12, size)
+  oct(136, 12, Math.trunc(mtimeMs / 1000))
+  h.write('        ', 148, 8, 'ascii') // chksum 占位（空格）
+  h.write(typeflag, 156, 1, 'ascii')
+  h.write('ustar', 257, 6, 'ascii')
+  h.write('00', 263, 2, 'ascii')
+  let sum = 0
+  for (const b of h) sum += b
+  h.write(octal(sum, 6) + '\0 ', 148, 8, 'ascii')
+  return h
+}
+const octal = (v, digits) => v.toString(8).padStart(digits, '0')
+const pad = (size) => Buffer.alloc((512 - (size % 512)) % 512)
+
 const tarPath = join(root, 'staging', 'dsh-runtime.tar.gz')
 rmSync(tarPath, { force: true })
-execSync('tar -czf "' + tarPath + '" .', {
-  cwd: staging,
-  stdio: 'ignore',
-  // Windows 上引号传递走 cmd 最稳（tar.exe 对正斜杠路径友好）
-  shell: process.platform === 'win32',
-})
+{
+  const gz = createGzip({ level: 6 })
+  const out = createWriteStream(tarPath)
+  gz.pipe(out)
+  // 注：write 回调成功时 error 为 null（非 undefined），必须宽松比较
+  const write = (buf) => new Promise((res, rej) => { gz.write(buf, (e) => (e != null ? rej(e) : res())) })
+  for (const f of tarFiles) {
+    const st = statSync(f.abs)
+    if (f.rel.length > 100) { // GNU LongName 头：超长路径的兼容写法
+      const nameBuf = Buffer.from(f.rel, 'utf8')
+      await write(tarHeader('././@LongLink', nameBuf.length + 1, st.mtimeMs, 'L'))
+      await write(Buffer.concat([nameBuf, Buffer.alloc(1), pad(nameBuf.length + 1)]))
+    }
+    await write(tarHeader(f.rel, st.size, st.mtimeMs))
+    for await (const chunk of createReadStream(f.abs)) await write(chunk)
+    if (st.size > 0) await write(pad(st.size))
+  }
+  await write(Buffer.alloc(1024)) // 两个全零块结尾
+  const done = new Promise((res, rej) => { out.on('error', rej); out.on('finish', res) })
+  gz.end()
+  await done
+}
 let tarSize = 0
 try {
   tarSize = Math.round(statSync(tarPath).size / 1024 / 1024)
 } catch { /* 仅展示 */ }
-console.log(`[materialize] 归档：staging/dsh-runtime.tar.gz（${tarSize} MB）`)
+console.log(`[materialize] 归档：${tarFiles.length} 个文件 → dsh-runtime.tar.gz（${tarSize} MB）`)
 // 自检：补完后再扫一轮，非 optional 的依赖引用必须全部可达
 for (const pj of stagingManifests()) {
   let pkg
