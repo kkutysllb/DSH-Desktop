@@ -23,7 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux-latest, macos-latest, windows-latest]
+        # GitHub 没有 linux-* runner 标签，Linux 公共 runner 只有 ubuntu-*
+        # （22.04 已在本项目验证全绿，且 glibc 更老对 deb 兼容性更好）
+        os: [ubuntu-22.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
