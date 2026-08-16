@@ -132,6 +132,8 @@ pnpm sync-upstream
 | 主题落点 `body[data-ds-dark-theme]` + `documentElement.style.colorScheme` | `packages/client/ui-theme/src/client/index.ts`（`scripts/verify-theme.cjs` 可验证） |
 | 标题栏色 token sidebar-fill（深 `#1B1B1C` = neutral-bluish-900 / 浅 `#F9FAFB` = 50）与根布局 `html,body,#root{height:100%}` | `packages/client/ui-theme/src/styles/design-platform.css` + `packages/client/web/src/base.css`（自绘拖拽区标题栏，颜色解析 token，页面注入等高 padding 下移） |
 | 标题栏文字 = `document.title`（“会话标题 — 产品名”） | `packages/client/web/src/DocumentTitle.tsx` |
+| 会话行选中态 `[role="treeitem"][aria-selected]` + React fiber `props.node.id`（标题栏终端按钮探当前会话；DOM/URL 均不暴露会话 id） | `packages/client/ui-workspace/src/client/rows/Rows.tsx` |
+| workspace RPC `POST /api/workspace.list`（client-request 信封、`Response.json` 应答，items[].path = 工作区目录、sessionIds 含当前会话即命中） | `packages/host/apiproxy/src/fetch/handler.ts` UNARY_ROUTES + `api/workspace.schema.ts` |
 | Node 版本要求 `engines.node` | 根 `package.json`（不满足时自动回退 Electron 内置 node / 提示） |
 
 ### 仓库卫生

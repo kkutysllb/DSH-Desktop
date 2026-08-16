@@ -20,6 +20,7 @@
  */
 
 import { nativeTheme, type BrowserWindow } from 'electron'
+import { consoleMessageText } from './console-channel'
 import { getSettings, saveSettings } from './store'
 
 /** console 通道前缀（与注入脚本约定）。 */
@@ -81,12 +82,7 @@ export function applyNativeTheme(pref: 'system' | 'light' | 'dark'): void {
 export function attachThemeWatcher(win: BrowserWindow): void {
   const { webContents } = win
   const onConsole = (event: unknown, ...rest: unknown[]): void => {
-    // 兼容新旧签名：新版 Electron 的 message 在 event 对象上，
-    // 旧版为 (event, level, message, line, sourceId)
-    const maybeMessage = (event as { message?: unknown } | null)?.message
-    const message = typeof maybeMessage === 'string'
-      ? maybeMessage
-      : typeof rest[2] === 'string' ? (rest[2] as string) : ''
+    const message = consoleMessageText(event, rest)
     if (!message.startsWith(THEME_PREFIX)) return
     const value = message.slice(THEME_PREFIX.length)
     if (value === 'dark' || value === 'light') {
@@ -96,9 +92,12 @@ export function attachThemeWatcher(win: BrowserWindow): void {
   }
   const onDidLoad = (): void => {
     if (win.isDestroyed()) return
-    // 自绘标题栏 + 页面下移（titleBarStyle:'hidden' 保留红绿灯；
-    // 上游 html/body/#root 均 height:100%，padding 下移不溢出）
-    webContents.executeJavaScript(SHELL_TITLEBAR_JS, true).catch(() => {})
+    // 自绘标题栏 + 页面下移仅 darwin（titleBarStyle:'hidden' 只在 mac
+    // 启用，其余平台保留系统标题栏，注入会造成双标题栏）；
+    // 上游 html/body/#root 均 height:100%，padding 下移不溢出
+    if (process.platform === 'darwin') {
+      webContents.executeJavaScript(SHELL_TITLEBAR_JS, true).catch(() => {})
+    }
     webContents.executeJavaScript(WATCH_JS, true).catch(() => {
       // 页面跳转间隙执行失败属正常，下次加载会重试
     })

@@ -16,6 +16,7 @@ import { dshManager } from './dsh-manager'
 import { installUpdate } from './updater'
 import { attachUpdateInjector } from './update-injector'
 import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
+import { attachWorkspaceTerminal } from './workspace-terminal'
 import { getSettings, saveSettings } from './store'
 
 /** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
@@ -74,6 +75,9 @@ export function showShellWindow(dshUrl: string): void {
     attachUpdateInjector(shellWindow)
     // 主题跟随：上游 UI 主题切换 → 原生标题栏/菜单栏自适应（零侵入）
     attachThemeWatcher(shellWindow)
+    // 标题栏右上角终端按钮：在当前任务的工作区目录打开系统终端
+    // （按钮宿主是自绘标题栏，仅 darwin）
+    if (process.platform === 'darwin') attachWorkspaceTerminal(shellWindow)
     // 只允许停留在 dsh 回环地址；外链交给系统浏览器
     shellWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('dsh-desktop:')) return { action: 'deny' }
