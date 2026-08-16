@@ -144,7 +144,10 @@ cmd_verify() {
   [[ -f "$tarball" ]] || die "校验失败：包内缺 dsh-runtime.tar.gz（开箱即用被破坏）"
   ok "内置运行时：dsh-runtime.tar.gz（$(du -h "$tarball" | cut -f1)）"
 
-  # 2) 解压 + 真实起服冒烟（模拟首启解压，包内运行时全链路验收）
+  # 2) 解压 + 真实起服冒烟（模拟首启解压，包内运行时全链路验收）；
+  #    macOS 上另跑 Electron node 形态——真机 GUI 启动时 PATH 无系统
+  #    node，回退 Electron 内置 node（v0.1.0 曾挂：HMR 需 internal
+  #    loader），系统 node 冒烟覆盖不到该路径
   local xdir; xdir="$(mktemp -d)"
   tar -xzf "$tarball" -C "$xdir" \
     || { rm -rf "$xdir"; die "校验失败：归档损坏无法解压"; }
@@ -152,6 +155,14 @@ cmd_verify() {
     || { rm -rf "$xdir"; die "校验失败：归档解压后缺 lib/bin.js"; }
   node "$ROOT/scripts/smoke-runtime.mjs" --dir "$xdir" \
     || { rm -rf "$xdir"; die "校验失败：包内运行时无法起服"; }
+  if [[ "$(uname)" == "Darwin" ]]; then
+    local bin="$app/Contents/MacOS/${APP_NAME%.app}"
+    [[ -x "$bin" ]] \
+      || { rm -rf "$xdir"; die "校验失败：app 内无主二进制（${bin}）"; }
+    node "$ROOT/scripts/smoke-runtime.mjs" --dir "$xdir" --exec "$bin" \
+      || { rm -rf "$xdir"; die "校验失败：Electron node 形态无法起服"; }
+    ok "Electron node 形态冒烟通过（真机启动路径）"
+  fi
   rm -rf "$xdir"
 
   # 3) macOS 签名（必须 Developer ID，拒绝 adhoc 坏包）

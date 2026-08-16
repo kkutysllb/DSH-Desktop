@@ -159,6 +159,12 @@ export function upstreamBuilt(): boolean {
 /**
  * 运行 dsh 用的 Node 解释器。
  *
+ * 统一带 `--expose-internals`：web profile 的 HMR 服务需要 node internal
+ * ESM loader（vendor/loader 的 requireInternal）。系统 node 下可走
+ * node-addon-require-builtin 回退，但 Electron 内置 node 下回退不可用，
+ * 必须显式给 flag（v0.1.0 真机首启即挂在此处，本地冒烟因用系统 node
+ * 而漏过）。
+ *
  * 优先系统 node（与用户构建上游时的版本一致），其版本必须满足上游
  * engines.node；不满足时退回 Electron 内置 node（ELECTRON_RUN_AS_NODE）；
  * 都不满足时返回 null（应引导用户修环境）。
@@ -169,10 +175,10 @@ export function resolveRuntime(): { command: string; args: string[]; isElectron:
   const sysOk =
     sysNode.status === 0 && typeof sysNode.stdout === 'string'
     && (range === null || satisfies(sysNode.stdout.trim().slice(1), range))
-  if (sysOk) return { command: 'node', args: [], isElectron: false }
+  if (sysOk) return { command: 'node', args: ['--expose-internals'], isElectron: false }
   const electronVersion = `v${process.versions.node}`
   if (range === null || satisfies(electronVersion.slice(1), range)) {
-    return { command: process.execPath, args: [], isElectron: true }
+    return { command: process.execPath, args: ['--expose-internals'], isElectron: true }
   }
   return null
 }
@@ -222,7 +228,7 @@ export function resolveDshCommand(): DshCommand | null {
   const bundled = ensureBundledRuntime()
   if (bundled !== null) {
     const runtime = resolveRuntime()
-    const cmd = runtime ?? { command: process.execPath, args: [], isElectron: true }
+    const cmd = runtime ?? { command: process.execPath, args: ['--expose-internals'], isElectron: true }
     return {
       source: 'checkout',
       command: cmd.command,

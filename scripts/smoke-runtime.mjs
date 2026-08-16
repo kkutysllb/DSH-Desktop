@@ -7,7 +7,14 @@
  * `dsh web: http://127.0.0.1:<port>`，再 GET / 要求 HTTP 200。
  * 任何一步失败即非零退出——禁止坏运行时进入安装包或被放行。
  *
- * 用法：node scripts/smoke-runtime.mjs [--dir <runtime-dir>]
+ * 用法：node scripts/smoke-runtime.mjs [--dir <runtime-dir>] [--exec <interpreter>]
+ *
+ * --exec 指定解释器（默认当前 node）。传入 Electron 应用二进制时以
+ * ELECTRON_RUN_AS_NODE 形态运行——复现真机 GUI 启动路径（PATH 无
+ * 系统 node 时回退 Electron 内置 node）。两种形态都带
+ * --expose-internals（与桌面端 resolveRuntime 的真实 spawn 严格一致：
+ * web profile 的 HMR 需 internal loader，Electron node 下 addon 回退
+ * 不可用，v0.1.0 真机曾挂在此处而系统 node 冒烟漏过）。
  *
  * @module scripts/smoke-runtime
  */
@@ -18,9 +25,15 @@ import { join, resolve } from 'node:path'
 
 const args = process.argv.slice(2)
 let dir = resolve(import.meta.dirname, '..', 'staging', 'dsh-runtime')
-if (args[0] === '--dir') {
-  if (!args[1]) { console.error('[smoke] --dir 需要路径参数'); process.exit(2) }
-  dir = resolve(args[1])
+let exec = process.execPath
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--dir') {
+    if (!args[i + 1]) { console.error('[smoke] --dir 需要路径参数'); process.exit(2) }
+    dir = resolve(args[++i])
+  } else if (args[i] === '--exec') {
+    if (!args[i + 1]) { console.error('[smoke] --exec 需要解释器路径'); process.exit(2) }
+    exec = resolve(args[++i])
+  }
 }
 if (!existsSync(join(dir, 'lib', 'bin.js'))) {
   console.error(`[smoke] ${dir} 下无 lib/bin.js`)
@@ -28,9 +41,14 @@ if (!existsSync(join(dir, 'lib', 'bin.js'))) {
 }
 
 const home = mkdtempSync(join(tmpdir(), 'dsh-smoke-'))
-const child = spawn(process.execPath, ['lib/bin.js', 'web', '--port', '0'], {
+const isElectron = exec !== process.execPath
+const child = spawn(exec, ['--expose-internals', 'lib/bin.js', 'web', '--port', '0'], {
   cwd: dir,
-  env: { ...process.env, DSH_HOME: home },
+  env: {
+    ...process.env,
+    DSH_HOME: home,
+    ...(isElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let buf = ''
