@@ -40,6 +40,10 @@ const bridge: DesktopBridge = {
   terminalTheme: () => ipcRenderer.invoke('terminal:theme'),
   clipboardReadText: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWriteText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  previewEntries: () => ipcRenderer.invoke('preview:entries'),
+  previewReadFile: (path) => ipcRenderer.invoke('preview:read-file', path),
+  previewHide: () => ipcRenderer.invoke('preview:hide'),
+  previewPanelResize: (dx) => ipcRenderer.invoke('preview:panel-resize', dx),
   onDshStateChanged: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, status: Parameters<typeof cb>[0]): void => cb(status)
     ipcRenderer.on('dsh:state-changed', listener)
@@ -74,6 +78,11 @@ const bridge: DesktopBridge = {
     const listener = (_e: Electron.IpcRendererEvent, t: Parameters<typeof cb>[0]): void => cb(t)
     ipcRenderer.on('terminal:theme', listener)
     return () => ipcRenderer.removeListener('terminal:theme', listener)
+  },
+  onPreviewActivity: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, entry: Parameters<typeof cb>[0], focus: boolean): void => cb(entry, focus)
+    ipcRenderer.on('preview:activity', listener)
+    return () => ipcRenderer.removeListener('preview:activity', listener)
   },
 }
 

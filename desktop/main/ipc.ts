@@ -14,7 +14,13 @@ import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './u
 import { communityPlugins, installedPlugins, runPluginCommand } from './plugins'
 import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
 import { terminalPanel, terminalTheme } from './terminal-panel'
-import type { UpstreamProgress } from '@shared/ipc-contract'
+import { previewPanel } from './preview-panel'
+import { fileActivity } from './file-activity'
+import { readFile, stat } from 'node:fs/promises'
+import type { UpstreamProgress, PreviewFileContent } from '@shared/ipc-contract'
+
+/** preview:read-file 的文件大小上限（超出截断）。 */
+const PREVIEW_FILE_LIMIT = 1_000_000
 
 /** 安装全部 IPC 处理器与事件桥。 */
 export function registerIpc(): void {
@@ -104,6 +110,33 @@ export function registerIpc(): void {
   ipcMain.handle('clipboard:write', (_event, text: string) => {
     clipboard.writeText(text)
     return Promise.resolve()
+  })
+
+  /* ---- 文件预览抽屉（右侧面板：活动列表/读盘/开合/拖宽） ---- */
+  ipcMain.handle('preview:entries', () => fileActivity.list())
+  ipcMain.handle('preview:read-file', async (_event, path: string): Promise<PreviewFileContent> => {
+    if (typeof path !== 'string' || path === '') return { ok: false, content: null, truncated: false, error: '无效路径' }
+    try {
+      const info = await stat(path)
+      if (!info.isFile()) return { ok: false, content: null, truncated: false, error: '不是常规文件' }
+      const buf = await readFile(path)
+      const truncated = buf.byteLength > PREVIEW_FILE_LIMIT
+      const content = (truncated ? buf.subarray(0, PREVIEW_FILE_LIMIT) : buf).toString('utf8')
+      return { ok: true, content, truncated, error: null }
+    } catch (error) {
+      return { ok: false, content: null, truncated: false, error: String(error) }
+    }
+  })
+  ipcMain.handle('preview:hide', () => {
+    previewPanel.hide()
+  })
+  ipcMain.handle('preview:panel-resize', (_event, dx: number) => {
+    previewPanel.adjustWidth(dx)
+    return previewPanel.width()
+  })
+  // 活动流转发（面板视图按需消费；隐藏时视图仍在，重开即回）
+  fileActivity.on('activity', (entry) => {
+    previewPanel.forwardActivity(entry, false)
   })
 
   /* ---- 事件广播（面板窗口存在才有听众） ---- */

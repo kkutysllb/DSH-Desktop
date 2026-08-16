@@ -18,6 +18,7 @@ import { attachUpdateInjector } from './update-injector'
 import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
 import { attachStyleOverlay } from './style-overlay'
 import { terminalPanel } from './terminal-panel'
+import { previewPanel } from './preview-panel'
 import { getSettings, saveSettings } from './store'
 
 /** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
@@ -84,6 +85,12 @@ export function showShellWindow(dshUrl: string): void {
     // 内嵌终端面板：底部真实终端（pty + xterm），页面探针/按钮注入
     // （按钮宿主是自绘标题栏，仅 darwin）
     if (process.platform === 'darwin') terminalPanel.attach(shellWindow)
+    // 文件预览抽屉：右侧 agent 文件活动预览（mux 订阅 + 语法高亮/diff）
+    if (process.platform === 'darwin') {
+      previewPanel.attach(shellWindow)
+      // 开合/拖宽 → 终端面板收窄让位（回调注入避免循环依赖）
+      previewPanel.onLayoutChange = () => terminalPanel.relayout()
+    }
     // 只允许停留在 dsh 回环地址；外链交给系统浏览器
     shellWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('dsh-desktop:')) return { action: 'deny' }

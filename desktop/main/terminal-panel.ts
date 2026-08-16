@@ -32,6 +32,7 @@ import { consoleMessageText } from './console-channel'
 import { getSettings, saveSettings } from './store'
 import { themeEvents } from './theme-watcher'
 import { PtyHost, dirLabel } from './pty-host'
+import { previewPanel } from './preview-panel'
 import type { TerminalTheme } from '@shared/ipc-contract'
 
 /** console 通道前缀（与注入脚本约定）。 */
@@ -335,6 +336,11 @@ class TerminalPanel {
     return this.panelH
   }
 
+  /** 请求重排（预览抽屉开合/拖宽后由布局联动回调触发）。 */
+  relayout(): void {
+    if (this.visible) this.layout()
+  }
+
   ptyHost(): PtyHost {
     return this.pty
   }
@@ -361,10 +367,12 @@ class TerminalPanel {
     if (win === null || win.isDestroyed() || view === null || !this.visible) return
     const [contentW, contentH] = win.getContentSize()
     const x = Math.min(this.sidebarW, Math.max(contentW - 200, 0))
+    // 右侧预览抽屉可见时收窄终端宽度（预览全高在上层，避免右下角遮挡）
+    const w = Math.max(contentW - x - previewPanel.visibleWidth(), 0)
     view.setBounds({
       x,
       y: Math.max(contentH - this.panelH, 0),
-      width: Math.max(contentW - x, 0),
+      width: w,
       height: this.panelH,
     })
     this.pad(this.panelH)

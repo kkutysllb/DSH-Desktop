@@ -150,6 +150,36 @@ export interface TerminalTab {
   title: string
 }
 
+/* ---------- 文件预览抽屉 ---------- */
+
+/** 一次文件活动（agent 读/改了哪个文件），随 preview:activity 推送。 */
+export interface PreviewEntry {
+  /** 绝对路径（相对路径已按当前工作区解析）。 */
+  path: string
+  /** read = 读取；edit = 编辑/写入。 */
+  kind: 'read' | 'edit'
+  /** 事件时间（Date.now()）。 */
+  at: number
+  /** 最近一次编辑的增/删行数（kind=edit 有值）。 */
+  added: number
+  removed: number
+  /** 语法高亮语言提示（上游 read 视图给出，或按扩展名推断）。 */
+  lang: string | null
+  /** 上游 applied hunk（kind=edit 有值；行级 diff 渲染原料）。 */
+  diffs: Array<{ path: string; oldText: string | null; newText: string }> | null
+  /** 主进程请求选中展示（正文文件链接接管时 true；普通活动缺省）。 */
+  focus?: boolean
+}
+
+/** preview:read-file 的结果（面板按需读盘）。 */
+export interface PreviewFileContent {
+  ok: boolean
+  content: string | null
+  /** 超过上限破截断。 */
+  truncated: boolean
+  error: string | null
+}
+
 /* ---------- preload 暴露面 ---------- */
 
 /** preload 通过 contextBridge 暴露的 `window.dshDesktop`。 */
@@ -194,6 +224,16 @@ export interface DesktopBridge {
   /* 剪贴板（终端右键菜单用；主进程 electron.clipboard 无权限问题） */
   clipboardReadText(): Promise<string>
   clipboardWriteText(text: string): Promise<void>
+  /* 文件预览抽屉（右侧面板，agent 读/编辑文件的活动流） */
+  /** 活动条目列表（最近在前，同文件聚合取最新）。 */
+  previewEntries(): Promise<PreviewEntry[]>
+  /** 按绝对路径读文件当前内容（限 1MB，超限截断）。 */
+  previewReadFile(path: string): Promise<PreviewFileContent>
+  /** 关闭抽屉（活动记录保留，重开即回）。 */
+  previewHide(): Promise<void>
+  /** 拖左缘调宽度（dx 向左为正 = 变宽），返回新宽度。 */
+  previewPanelResize(dx: number): Promise<number>
+  onPreviewActivity(cb: (e: PreviewEntry, focus: boolean) => void): () => void
   /* 事件订阅（返回退订函数） */
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
   onDshLog(cb: (l: DshLogLine) => void): () => void

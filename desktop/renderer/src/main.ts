@@ -13,15 +13,16 @@ import { mountDiagnostics } from './views/diagnostics'
 import { mountSync } from './views/sync'
 import { mountPlugins } from './views/plugins'
 import { mountTerminal } from './views/terminal'
+import { mountPreview } from './views/preview'
 import { mountLanding } from './views/landing'
 
 const app = document.getElementById('app') as HTMLDivElement
 
-type Route = 'landing' | 'splash' | 'setup' | 'diagnostics' | 'sync' | 'plugins' | 'terminal'
+type Route = 'landing' | 'splash' | 'setup' | 'diagnostics' | 'sync' | 'plugins' | 'terminal' | 'preview'
 
 function route(): Route {
   const hash = window.location.hash.replace(/^#\//, '')
-  const valid: Route[] = ['landing', 'splash', 'setup', 'diagnostics', 'sync', 'plugins', 'terminal']
+  const valid: Route[] = ['landing', 'splash', 'setup', 'diagnostics', 'sync', 'plugins', 'terminal', 'preview']
   return (valid as string[]).includes(hash) ? (hash as Route) : 'landing'
 }
 
@@ -49,6 +50,9 @@ function render(): void {
       break
     case 'terminal':
       void mountTerminal(app)
+      break
+    case 'preview':
+      void mountPreview(app)
       break
   }
 }

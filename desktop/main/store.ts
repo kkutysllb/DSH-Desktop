@@ -21,6 +21,8 @@ export interface DesktopSettings {
   lastTheme: 'system' | 'light' | 'dark'
   /** 内嵌终端面板高度（拖拽调节后记住）。 */
   terminalHeight: number | null
+  /** 文件预览抽屉宽度（拖拽调节后记住）。 */
+  previewWidth: number | null
 }
 
 const DEFAULTS: DesktopSettings = {
@@ -28,6 +30,7 @@ const DEFAULTS: DesktopSettings = {
   keepRunningInTray: true,
   lastTheme: 'system',
   terminalHeight: null,
+  previewWidth: null,
 }
 
 let cache: DesktopSettings | null = null

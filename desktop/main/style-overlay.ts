@@ -104,16 +104,17 @@ const INJECT_JS = `(() => {
  * 重复调用安全，窗口重建时旧监听随窗口销毁）。
  */
 export function attachStyleOverlay(win: BrowserWindow): void {
+  // 先捕获：closed 时窗口已销毁，再访问 win.webContents getter 会抛
+  // "Object has been destroyed"（terminal-panel 同款防御）
+  const { webContents } = win
   const onDidLoad = (): void => {
     if (win.isDestroyed()) return
-    win.webContents.executeJavaScript(INJECT_JS, true).catch(() => {
+    webContents.executeJavaScript(INJECT_JS, true).catch(() => {
       // 页面跳转间隙执行失败属正常，下次加载会重试
     })
   }
-  win.webContents.on('did-finish-load', onDidLoad)
+  webContents.on('did-finish-load', onDidLoad)
   win.once('closed', () => {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.removeListener('did-finish-load', onDidLoad)
-    }
+    webContents.removeListener('did-finish-load', onDidLoad)
   })
 }

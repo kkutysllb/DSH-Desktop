@@ -1,0 +1,287 @@
+/**
+ * 文件活动订阅器：作为第二个客户端连 dsh 的 mux 事件流，过滤出
+ * agent 的读文件 / 编辑文件活动，供右侧预览抽屉消费。
+ *
+ * 上游契约（packages/host/apiproxy/src/api/events.ts + core/tools
+ * presentation.ts，全部运行时消费，零修改）：
+ * - mux 流：`ws://127.0.0.1:<port>/api/events.mux`，连上即推、客户端
+ *   只读（发消息是协议违规）；Node WebSocket 客户端不带 Origin 头，
+ *   走 loopback 受信分支，无需 token；
+ * - 帧：`{type:'session/event', sessionId, event, view?}`，本订阅器只
+ *   关心 `event.type === 'tool/result'` 且 `view.for === 'result'`：
+ *   - `view.view.card === 'read'`：ReadResultView（path/lines/lang/
+ *     totalLines，行号齐全）；
+ *   - `view.view.card === 'diff'`：DiffResultView（diffs = applied
+ *     contextual hunks，`{path, oldText|null, newText}`）；
+ * - view 是 host 侧即时推导的渲染意图、不持久化——断线重连前发生的
+ *   活动不会重放，抽屉展示"连接之后"的实时活动，符合预览场景。
+ *
+ * 生命周期跟随 dshManager：ready 即连（重启换端口自动重连），其余
+ * 状态断开；活动按文件聚合（同文件取最新），上限 {@link MAX_ENTRIES}。
+ *
+ * @module desktop/main/file-activity
+ */
+
+import { EventEmitter } from 'node:events'
+import { isAbsolute, join } from 'node:path'
+import { dshManager } from './dsh-manager'
+import type { PreviewEntry } from '@shared/ipc-contract'
+
+/** 聚合后的活动条目上限（超出丢最老）。 */
+const MAX_ENTRIES = 300
+
+/** 断线重连间隔（毫秒）。 */
+const RECONNECT_MS = 2_000
+
+/** diff 行数统计的 DP 上限（乘积），超过退化为粗略计数。 */
+const LCS_CELL_LIMIT = 4_000_000
+
+/** 常见扩展名 → 高亮语言提示（上游 read 视图给 lang 时优先）。 */
+const EXT_LANG: Record<string, string> = {
+  ts: 'ts', tsx: 'ts', mts: 'ts', cts: 'ts',
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+  json: 'json', jsonc: 'json',
+  css: 'css', scss: 'scss', less: 'less',
+  html: 'xml', xml: 'xml', svg: 'xml',
+  md: 'md', mdx: 'md',
+  py: 'py', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+  c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp', cxx: 'cpp',
+  cs: 'cs', swift: 'swift', kt: 'kotlin',
+  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+  yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
+  sql: 'sql', lua: 'lua', php: 'php', dart: 'dart',
+}
+
+function langOf(path: string, hint: unknown): string | null {
+  if (typeof hint === 'string' && hint !== '') return hint
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return null
+  const ext = path.slice(dot + 1).toLowerCase()
+  return EXT_LANG[ext] ?? null
+}
+
+/** 行数统计：LCS 公共行（首尾公共行 trim 后 DP，超限退化粗略值）。 */
+function countChanges(oldText: string | null, newText: string): { added: number; removed: number } {
+  const oldLines = oldText === null ? [] : oldText.split('\n')
+  const newLines = newText.split('\n')
+  // 首尾公共行裁剪（未变更的上下文大头）
+  let head = 0
+  while (head < oldLines.length && head < newLines.length && oldLines[head] === newLines[head]) head++
+  let tail = 0
+  while (
+    tail < oldLines.length - head && tail < newLines.length - head
+    && oldLines[oldLines.length - 1 - tail] === newLines[newLines.length - 1 - tail]
+  ) tail++
+  const a = oldLines.slice(head, oldLines.length - tail)
+  const b = newLines.slice(head, newLines.length - tail)
+  if (a.length === 0 || b.length === 0) {
+    return { added: b.length, removed: a.length }
+  }
+  if (a.length * b.length > LCS_CELL_LIMIT) {
+    // 超大 hunk：粗略（宁多勿漏，仅影响 badge 数字）
+    return { added: b.length, removed: a.length }
+  }
+  // 经典 LCS DP（滚动行）
+  let prev = new Uint32Array(b.length + 1)
+  let curr = new Uint32Array(b.length + 1)
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], curr[j - 1])
+    }
+    const swap = prev; prev = curr; curr = swap
+    curr.fill(0)
+  }
+  const common = prev[b.length]
+  return { added: b.length - common, removed: a.length - common }
+}
+
+/** mux 帧的最小形状（只声明消费的字段）。 */
+interface MuxFrame {
+  type: string
+  event?: { type?: string }
+  view?: { for?: string; view?: Record<string, unknown> }
+}
+
+/**
+ * 订阅器单例。`setWorkspace` 由面板层喳进页面探针解析的工作区路径
+ * （model-facing 相对路径 → 绝对路径的解析基准）。
+ */
+class FileActivity extends EventEmitter {
+  private readonly byPath = new Map<string, PreviewEntry>()
+  private ws: WebSocket | null = null
+  private reconnectTimer: NodeJS.Timeout | null = null
+  private workspace: string | null = null
+
+  constructor() {
+    super()
+    dshManager.on('state-changed', (status) => {
+      if (status.state === 'ready' && status.url !== null) this.connect(status.url)
+      else this.disconnect()
+    })
+    const current = dshManager.status
+    if (current.state === 'ready' && current.url !== null) this.connect(current.url)
+  }
+
+  /** 页面探针解析的工作区路径（相对 path 的解析基准）。 */
+  setWorkspace(path: string | null): void {
+    this.workspace = path
+  }
+
+  /** 聚合条目（最新在前）。 */
+  list(): PreviewEntry[] {
+    return [...this.byPath.values()].reverse()
+  }
+
+  /**
+   * 手动打开（正文文件链接接管）：已有条目复用（保留 edit 的 diff），
+   * 否则建 read 条目；返回后由面板层 show + focus 选中。
+   */
+  open(path: string): PreviewEntry {
+    const abs = this.resolve(path)
+    const existing = this.byPath.get(abs)
+    const entry: PreviewEntry = existing !== undefined
+      ? { ...existing, at: Date.now() }
+      : {
+          path: abs,
+          kind: 'read',
+          at: Date.now(),
+          added: 0,
+          removed: 0,
+          lang: langOf(abs, null),
+          diffs: null,
+        }
+    this.byPath.delete(abs)
+    this.byPath.set(abs, entry)
+    while (this.byPath.size > MAX_ENTRIES) {
+      const oldest = this.byPath.keys().next().value
+      if (oldest === undefined) break
+      this.byPath.delete(oldest)
+    }
+    return entry
+  }
+
+  /** 应用退出前清理。 */
+  dispose(): void {
+    this.disconnect()
+  }
+
+  private connect(httpUrl: string): void {
+    this.disconnect()
+    const wsUrl = httpUrl.replace(/^http/, 'ws') + '/api/events.mux'
+    let socket: WebSocket
+    try {
+      socket = new WebSocket(wsUrl)
+    } catch {
+      this.scheduleReconnect()
+      return
+    }
+    this.ws = socket
+    socket.onopen = () => { /* 连上即推，无订阅握手 */ }
+    socket.onmessage = (event: MessageEvent) => {
+      if (typeof event.data !== 'string') return
+      let frame: MuxFrame
+      try { frame = JSON.parse(event.data) as MuxFrame } catch { return }
+      this.consume(frame)
+    }
+    socket.onclose = () => {
+      if (this.ws === socket) this.ws = null
+      if (dshManager.status.state === 'ready') this.scheduleReconnect()
+    }
+    socket.onerror = () => { /* onclose 随后到，重连统一在那里处理 */ }
+  }
+
+  private disconnect(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    const socket = this.ws
+    this.ws = null
+    if (socket !== null) {
+      socket.onclose = null
+      socket.onmessage = null
+      socket.onerror = null
+      try { socket.close() } catch { /* 已关闭 */ }
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer !== null) return
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      const status = dshManager.status
+      if (status.state === 'ready' && status.url !== null) this.connect(status.url)
+    }, RECONNECT_MS)
+  }
+
+  private consume(frame: MuxFrame): void {
+    if (frame.type !== 'session/event') return
+    if (frame.event?.type !== 'tool/result') return
+    const view = frame.view
+    if (view?.for !== 'result' || view.view === undefined) return
+    const card = view.view
+    let entry: PreviewEntry | null = null
+    if (card.card === 'read') {
+      const path = typeof card.path === 'string' ? card.path : null
+      if (path !== null) {
+        entry = {
+          path: this.resolve(path),
+          kind: 'read',
+          at: Date.now(),
+          added: 0,
+          removed: 0,
+          lang: langOf(path, card.lang),
+          diffs: null,
+        }
+      }
+    } else if (card.card === 'diff') {
+      const diffsRaw = Array.isArray(card.diffs) ? card.diffs : []
+      const diffs = diffsRaw.flatMap((d) => {
+        if (d === null || typeof d !== 'object') return []
+        const p = typeof (d as Record<string, unknown>).path === 'string' ? (d as Record<string, unknown>).path as string : null
+        const newText = typeof (d as Record<string, unknown>).newText === 'string' ? (d as Record<string, unknown>).newText as string : null
+        if (p === null || newText === null) return []
+        const oldText = typeof (d as Record<string, unknown>).oldText === 'string' ? (d as Record<string, unknown>).oldText as string : null
+        return [{ path: this.resolve(p), oldText, newText }]
+      })
+      if (diffs.length === 0) return
+      // 首个 hunk 定位主文件（多文件 hunk 极罕见，badge 取合计）
+      let added = 0
+      let removed = 0
+      for (const d of diffs) {
+        const counts = countChanges(d.oldText, d.newText)
+        added += counts.added
+        removed += counts.removed
+      }
+      entry = {
+        path: diffs[0].path,
+        kind: 'edit',
+        at: Date.now(),
+        added,
+        removed,
+        lang: langOf(diffs[0].path, null),
+        diffs,
+      }
+    }
+    if (entry === null) return
+    // 同文件聚合：移到最新位置（Map 插入序即活动序）
+    this.byPath.delete(entry.path)
+    this.byPath.set(entry.path, entry)
+    while (this.byPath.size > MAX_ENTRIES) {
+      const oldest = this.byPath.keys().next().value
+      if (oldest === undefined) break
+      this.byPath.delete(oldest)
+    }
+    this.emit('activity', entry)
+  }
+
+  /** model-facing path → 绝对路径（绝对用之；相对按工作区解析）。 */
+  private resolve(path: string): string {
+    if (isAbsolute(path)) return path
+    const ws = this.workspace
+    return ws !== null && ws !== '' ? join(ws, path) : path
+  }
+}
+
+/** 进程级单例（活动记录跨窗口存续，托盘保活期间继续累积）。 */
+export const fileActivity = new FileActivity()
