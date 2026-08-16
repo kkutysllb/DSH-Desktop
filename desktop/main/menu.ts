@@ -207,9 +207,14 @@ export function installMenu(): void {
 
 /** 安装托盘；重复调用仅刷新菜单与 tooltip（供状态变化时重建）。 */
 export function installTray(): void {
-  // 官方 DeepSeek 鲸鱼托盘图标（开发/打包路径由 dsh-contract 统一解析）
+  // 官方 DeepSeek 鲸鱼托盘图标（开发/打包路径由 dsh-contract 统一解析）。
+  // macOS 用模板图（黑色形状 + alpha，系统自动适配深/浅菜单栏——
+  // 原浅紫色在浅色菜单栏对比度不足）；Windows/Linux 任务栏支持彩色，
+  // 保持原图。
   if (tray === null) {
-    const image = nativeImage.createFromPath(resolveAsset('tray.png'))
+    const isMac = process.platform === 'darwin'
+    const image = nativeImage.createFromPath(resolveAsset(isMac ? 'trayTemplate.png' : 'tray.png'))
+    if (isMac) image.setTemplateImage(true)
     tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 }))
     tray.on('click', () => {
       const url = dshManager.status.url

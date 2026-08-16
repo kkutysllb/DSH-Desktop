@@ -48,6 +48,17 @@ export const PROJECT_ROOT = resolve(__dirname, '..', '..')
 export const UPSTREAM_DIR = join(PROJECT_ROOT, UPSTREAM_DIR_NAME)
 
 /**
+ * 打包内置的上游运行时（extraResources/dsh-runtime，开箱即用的核心）。
+ * 开发态（未打包/未物化）返回 null，走本地克隆。
+ */
+export function bundledRuntimeDir(): string | null {
+  const base = process.resourcesPath
+  if (base === undefined) return null
+  const dir = join(base, 'dsh-runtime')
+  return existsSync(join(dir, BUNDLED_BIN)) ? dir : null
+}
+
+/**
  * 解析 assets/ 下的资产路径（官方 DeepSeek 图标等）。
  * 开发时在项目根 assets/；打包后在 extraResources 的 assets/ 下。
  */
@@ -59,6 +70,9 @@ export function resolveAsset(name: string): string {
 
 /** 构建后的 CLI bin（相对上游根）。 */
 export const UPSTREAM_BIN = join('apps', 'cli', 'lib', 'bin.js')
+
+/** 物化运行时内的 CLI bin（pnpm deploy 输出即 CLI 包根，无 apps/cli 层级）。 */
+export const BUNDLED_BIN = join('lib', 'bin.js')
 
 /** 上游 web profile 名称。 */
 export const WEB_PROFILE = 'web'
@@ -129,8 +143,10 @@ export interface DshCommand {
 /**
  * 解析启动 dsh 的命令，优先级：
  * 1. `DSH_BIN` 环境变量（可执行文件或 `node script.js` 形式）
- * 2. 本地克隆的构建产物（`node apps/cli/lib/bin.js`）
- * 3. PATH 中的 `dsh`
+ * 2. 打包内置运行时（`resources/dsh-runtime`，安装即用；系统 node
+ *    满足版本要求时用系统，否则用 Electron 内置 node）
+ * 3. 本地克隆的构建产物（`node apps/cli/lib/bin.js`，开发态）
+ * 4. PATH 中的 `dsh`
  *
  * @returns 命令描述；找不到任何可用来源时返回 null。
  */
@@ -149,7 +165,23 @@ export function resolveDshCommand(): DshCommand | null {
     }
   }
 
-  // 2) 本地克隆的构建产物
+  // 2) 打包内置运行时（物化产物是纯 JS，不挑 node 小版本；
+  // 系统 node 缺失或不满足 range 时无条件用 Electron 内置 node）
+  const bundled = bundledRuntimeDir()
+  if (bundled !== null) {
+    const runtime = resolveRuntime()
+    const cmd = runtime ?? { command: process.execPath, args: [], isElectron: true }
+    return {
+      source: 'checkout',
+      command: cmd.command,
+      baseArgs: [...cmd.args, join(bundled, BUNDLED_BIN)],
+      cwd: bundled,
+      env: cmd.isElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {},
+      describe: `内置运行时: ${cmd.isElectron ? 'Electron node' : '系统 node'} ${join(bundled, BUNDLED_BIN)}`,
+    }
+  }
+
+  // 3) 本地克隆的构建产物
   if (upstreamCloned() && upstreamBuilt()) {
     const runtime = resolveRuntime()
     if (runtime !== null) {
@@ -165,7 +197,7 @@ export function resolveDshCommand(): DshCommand | null {
     return null
   }
 
-  // 3) PATH 中的 dsh（用户全局安装了 @deepseek-ai/dsh 或自行链接）
+  // 4) PATH 中的 dsh（用户全局安装了 @deepseek-ai/dsh 或自行链接）
   const probe = spawnSync('dsh', ['--version'], { encoding: 'utf8', timeout: 10_000 })
   if (probe.status === 0) {
     return {

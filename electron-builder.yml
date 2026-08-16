@@ -7,6 +7,18 @@ files:
   - out/**
   - "!**/*.map"
 extraResources:
+  # 开箱即用的核心：上游运行时（pnpm deploy + peer 补齐 + flatten）
+  # 随包分发——安装后无需克隆/构建上游。注意：electron-builder 的
+  # 目录遍历默认丢弃 node_modules，必须把 node_modules 拆成独立
+  # from 条目才能进包。由 scripts/release.sh build 物化到 staging/。
+  - from: staging/dsh-runtime/lib
+    to: dsh-runtime/lib
+  - from: staging/dsh-runtime/config
+    to: dsh-runtime/config
+  - from: staging/dsh-runtime/package.json
+    to: dsh-runtime/package.json
+  - from: staging/dsh-runtime/node_modules
+    to: dsh-runtime/node_modules
   # scripts 与 assets（官方图标）随应用分发，供首次引导与托盘使用
   - from: scripts
     to: scripts
@@ -25,6 +37,11 @@ mac:
     - zip
   icon: build/icon.png
   minimumSystemVersion: '13.0'
+  # 正式发布的包必须公证（未公证的 Developer ID 应用会被用户机器的
+  # Gatekeeper 拦截）。凭据走 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+  # APPLE_TEAM_ID 环境变量——缺任一 electron-builder 会直接构建失败，
+  # 防止无公证包流出（scripts/release.sh build 会提前拦截并提示）。
+  notarize: true
 dmg:
   title: DSH Desktop ${version}
 linux:
