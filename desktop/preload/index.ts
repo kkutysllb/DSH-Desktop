@@ -28,6 +28,7 @@ const bridge: DesktopBridge = {
   updateStatus: () => ipcRenderer.invoke('update:status'),
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
+  showShell: () => ipcRenderer.invoke('shell:show'),
   terminalWrite: (data) => ipcRenderer.invoke('terminal:write', data),
   terminalResize: (cols, rows) => ipcRenderer.invoke('terminal:resize', cols, rows),
   terminalRestart: () => ipcRenderer.invoke('terminal:restart'),

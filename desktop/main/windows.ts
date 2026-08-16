@@ -68,7 +68,10 @@ export function showShellWindow(dshUrl: string): void {
         sandbox: true,
       },
     })
-    shellWindow.once('ready-to-show', () => shellWindow?.show())
+    shellWindow.once('ready-to-show', () => {
+      shellWindow?.maximize()
+      shellWindow?.show()
+    })
     shellWindow.on('resized', persistBounds)
     shellWindow.on('moved', persistBounds)
     // 更新下载完成后：侧边栏 logo 旁出现安装按钮（注入器零侵入上游）
@@ -151,15 +154,18 @@ export function openPanel(panel: 'setup' | 'diagnostics' | 'sync' | 'plugins', t
 }
 
 /**
- * 打开 bootstrap 窗口（splash/失败引导）。桌面端启动时先显示，
- * dsh 就绪后由 index.ts 切到 shell 窗口。
+ * 打开 bootstrap 窗口（landing/splash/失败引导）。landing 是桌面端
+ * 的首屏，保持到用户主动进入工作台；splash/setup 仍使用紧凑的引导尺寸。
  */
-export function showBootstrap(route: 'splash' | 'setup'): BrowserWindow {
+export function showBootstrap(route: 'landing' | 'splash' | 'setup'): BrowserWindow {
+  const landing = route === 'landing'
   const win = new BrowserWindow({
-    width: 720,
-    height: 560,
-    title: 'DSH Desktop',
-    resizable: false,
+    width: landing ? 1320 : 720,
+    height: landing ? 860 : 560,
+    minWidth: landing ? 960 : undefined,
+    minHeight: landing ? 640 : undefined,
+    title: landing ? 'DeepSeek Harness' : 'DSH Desktop',
+    resizable: landing,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: themeBackgroundColor(),
@@ -171,7 +177,10 @@ export function showBootstrap(route: 'splash' | 'setup'): BrowserWindow {
       sandbox: false,
     },
   })
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => {
+    if (landing) win.maximize()
+    win.show()
+  })
   const url = RENDERER_URL !== undefined
     ? `${RENDERER_URL}/#/${route}`
     : `${pathToFileURL(join(__dirname, '../renderer/index.html')).href}#/${route}`

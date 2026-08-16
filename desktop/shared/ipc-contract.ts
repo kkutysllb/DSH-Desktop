@@ -165,6 +165,8 @@ export interface DesktopBridge {
   updateCheck(): Promise<UpdateStatus>
   updateInstall(): Promise<UpdateStatus>
   updateStatus(): Promise<UpdateStatus>
+  /** 打开已就绪的 dsh Web UI，并关闭当前 landing 窗口。 */
+  showShell(): Promise<boolean>
   openExternal(url: string): Promise<void>
   revealPath(path: string): Promise<void>
   upstreamSync(): Promise<{ ok: boolean; error: string | null }>

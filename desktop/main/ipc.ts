@@ -59,6 +59,13 @@ export function registerIpc(): void {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return Promise.resolve()
   })
+  ipcMain.handle('shell:show', (event) => {
+    const url = dshManager.status.url
+    if (url === null) return false
+    showShellWindow(url)
+    BrowserWindow.fromWebContents(event.sender)?.close()
+    return true
+  })
   ipcMain.handle('shell:revealPath', (_event, target: string) => {
     void shell.showItemInFolder(target)
     return Promise.resolve()

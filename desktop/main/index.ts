@@ -1,8 +1,8 @@
 /**
  * DSH Desktop 主进程入口。
  *
- * 启动流程：单实例锁 → app ready → 菜单/托盘/IPC → splash 窗口 →
- * 启动 dsh 侧车 → 就绪即切换 shell 窗口（上游 Web UI）；
+ * 启动流程：单实例锁 → app ready → 菜单/托盘/IPC → landing 窗口 →
+ * 启动 dsh 侧车；用户从 landing 主动进入 shell 窗口。
  * 失败则停留在 setup 引导页。退出时优雅关停 dsh。
  *
  * @module desktop/main
@@ -30,14 +30,11 @@ app.whenReady().then(() => {
   wireMenuRefresh() // dsh/更新状态变化 → 重建菜单与托盘
   initUpdater() // 自动更新：启动后静默检测，下载完成侧边栏出现安装按钮
 
-  // 启动即显示 splash：任何后续状态都在可见反馈中发生
-  bootstrap = showBootstrap('splash')
+  // 启动即显示 landing：服务在后台准备，用户决定何时进入工作台
+  bootstrap = showBootstrap('landing')
 
   const onStateChanged = (status: { state: string; url: string | null }): void => {
-    if (status.state === 'ready' && status.url !== null) {
-      showShellWindow(status.url)
-      bootstrap?.close()
-      bootstrap = null
+    if (status.state === 'ready') {
       dshManager.removeListener('state-changed', onStateChanged)
     } else if (status.state === 'failed') {
       if (bootstrap !== null && !bootstrap.isDestroyed()) {
@@ -59,9 +56,12 @@ app.whenReady().then(() => {
   dshManager.start()
 
   app.on('activate', () => {
-    // macOS dock 图标点击：有 shell 显 shell，否则维持现状
-    const url = dshManager.status.url
-    if (url !== null) showShellWindow(url)
+    // macOS dock 图标点击：优先回到 landing；工作台由用户从 landing 打开
+    if (bootstrap !== null && !bootstrap.isDestroyed()) bootstrap.show()
+    else {
+      const url = dshManager.status.url
+      if (url !== null) showShellWindow(url)
+    }
   })
 })
 
@@ -71,9 +71,11 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    const url = dshManager.status.url
-    if (url !== null) showShellWindow(url)
-    else if (bootstrap !== null && !bootstrap.isDestroyed()) bootstrap.show()
+    if (bootstrap !== null && !bootstrap.isDestroyed()) bootstrap.show()
+    else {
+      const url = dshManager.status.url
+      if (url !== null) showShellWindow(url)
+    }
   })
 }
 

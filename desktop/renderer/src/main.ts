@@ -1,5 +1,5 @@
 /**
- * 渲染端入口：极简 hash 路由（#/splash、#/setup、#/diagnostics、
+ * 渲染端入口：极简 hash 路由（#/landing、#/splash、#/setup、#/diagnostics、
  * #/sync、#/plugins、#/terminal）。无框架——桌面壳页面保持
  * 除终端（xterm.js）外零运行时依赖。
  *
@@ -13,20 +13,25 @@ import { mountDiagnostics } from './views/diagnostics'
 import { mountSync } from './views/sync'
 import { mountPlugins } from './views/plugins'
 import { mountTerminal } from './views/terminal'
+import { mountLanding } from './views/landing'
 
 const app = document.getElementById('app') as HTMLDivElement
 
-type Route = 'splash' | 'setup' | 'diagnostics' | 'sync' | 'plugins' | 'terminal'
+type Route = 'landing' | 'splash' | 'setup' | 'diagnostics' | 'sync' | 'plugins' | 'terminal'
 
 function route(): Route {
   const hash = window.location.hash.replace(/^#\//, '')
-  const valid: Route[] = ['splash', 'setup', 'diagnostics', 'sync', 'plugins', 'terminal']
-  return (valid as string[]).includes(hash) ? (hash as Route) : 'splash'
+  const valid: Route[] = ['landing', 'splash', 'setup', 'diagnostics', 'sync', 'plugins', 'terminal']
+  return (valid as string[]).includes(hash) ? (hash as Route) : 'landing'
 }
 
 function render(): void {
   app.replaceChildren()
+  app.className = ''
   switch (route()) {
+    case 'landing':
+      mountLanding(app)
+      break
     case 'splash':
       mountSplash(app)
       break
