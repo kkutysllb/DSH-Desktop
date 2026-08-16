@@ -130,7 +130,8 @@ pnpm sync-upstream
 | Profile 层叠 `dsh.profile.bundles` | `packages/boot/app-boot/src/profile.ts` |
 | 侧边栏 `logoRow` / `collapsed` DOM 类名 | `packages/client/ui-sidebar/src/client/SidebarRoot.tsx`（`scripts/verify-inject.cjs` 可验证） |
 | 主题落点 `body[data-ds-dark-theme]` + `documentElement.style.colorScheme` | `packages/client/ui-theme/src/client/index.ts`（`scripts/verify-theme.cjs` 可验证） |
-| 标题栏色 token sidebar-fill（深 `#1B1B1C` = neutral-bluish-900 / 浅 `#F9FAFB` = 50）与根布局 `html,body,#root{height:100%}` | `packages/client/ui-theme/src/styles/design-platform.css` + `packages/client/web/src/base.css`（标题栏用 WCO 覆盖条着色，页面注入等高 padding 下移） |
+| 标题栏色 token sidebar-fill（深 `#1B1B1C` = neutral-bluish-900 / 浅 `#F9FAFB` = 50）与根布局 `html,body,#root{height:100%}` | `packages/client/ui-theme/src/styles/design-platform.css` + `packages/client/web/src/base.css`（自绘拖拽区标题栏，颜色解析 token，页面注入等高 padding 下移） |
+| 标题栏文字 = `document.title`（“会话标题 — 产品名”） | `packages/client/web/src/DocumentTitle.tsx` |
 | Node 版本要求 `engines.node` | 根 `package.json`（不满足时自动回退 Electron 内置 node / 提示） |
 
 ### 仓库卫生

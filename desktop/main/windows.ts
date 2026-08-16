@@ -15,7 +15,7 @@ import { resolveAsset } from './dsh-contract'
 import { dshManager } from './dsh-manager'
 import { installUpdate } from './updater'
 import { attachUpdateInjector } from './update-injector'
-import { attachThemeWatcher, themeBackgroundColor, SHELL_TITLEBAR_HEIGHT } from './theme-watcher'
+import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
 import { getSettings, saveSettings } from './store'
 
 /** dev 模式下 renderer 的 vite 服务地址；生产为 out/renderer 静态文件。 */
@@ -50,14 +50,13 @@ export function showShellWindow(dshUrl: string): void {
       title: 'DSH Desktop',
       // 按上次已知主题设底色，页面加载期间不白闪/黑闪
       backgroundColor: themeBackgroundColor(),
-      // macOS：隐藏系统标题栏（其颜色由系统材质绘制、backgroundColor
-      // 无法控制），改用 WCO 覆盖条——颜色取上游 token，与主界面无缝；
-      // 页面由 theme-watcher 注入等高 padding 下移，不被遮挡
+      // macOS：隐藏系统标题栏但保留红绿灯（'hidden'）；标题栏由
+      // theme-watcher 注入自绘拖拽区（VS Code 同款）：颜色直接解析
+      // 上游 token 随主题实时变化，双击缩放/拖拽原生可用，标题显示
+      // document.title（上游 DocumentTitle 投射会话任务标题）。
+      // 注：不用 WCO 覆盖条——它在 macOS 不渲染标题且双击缩放失效。
       ...(process.platform === 'darwin'
-        ? {
-            titleBarStyle: 'hidden' as const,
-            titleBarOverlay: { color: themeBackgroundColor(), height: SHELL_TITLEBAR_HEIGHT },
-          }
+        ? { titleBarStyle: 'hidden' as const }
         : {}),
       // 官方 DeepSeek 图标（macOS 用 Dock 图标，此项服务 Linux/Windows）
       icon: resolveAsset('icon.png'),

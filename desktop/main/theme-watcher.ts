@@ -96,9 +96,9 @@ export function attachThemeWatcher(win: BrowserWindow): void {
   }
   const onDidLoad = (): void => {
     if (win.isDestroyed()) return
-    // 标题栏覆盖条下移页面：上游 html/body/#root 均为 height:100%，
-    // body padding-top 不会溢出（内容盒 = 视口 - 覆盖条高）
-    webContents.executeJavaScript(SHELL_PAD_JS, true).catch(() => {})
+    // 自绘标题栏 + 页面下移（titleBarStyle:'hidden' 保留红绿灯；
+    // 上游 html/body/#root 均 height:100%，padding 下移不溢出）
+    webContents.executeJavaScript(SHELL_TITLEBAR_JS, true).catch(() => {})
     webContents.executeJavaScript(WATCH_JS, true).catch(() => {
       // 页面跳转间隙执行失败属正常，下次加载会重试
     })
@@ -124,31 +124,74 @@ export function themeBackgroundColor(pref: 'system' | 'light' | 'dark' = getSett
   return nativeTheme.shouldUseDarkColors ? '#1B1B1C' : '#F9FAFB'
 }
 
-/** 页面下移注入（macOS 标题栏覆盖条占高，页面上让出）：幂等。 */
-const SHELL_PAD_JS = `(() => {
-  const ID = '__dsh_desktop_titlebar_pad'
-  if (document.getElementById(ID)) return
-  const st = document.createElement('style')
-  st.id = ID
-  st.textContent = 'body{padding-top:${SHELL_TITLEBAR_HEIGHT}px;box-sizing:border-box}'
-  document.head.append(st)
+/**
+ * 自绘标题栏（页面上下文）：替代系统标题栏（WCO 覆盖条在 macOS 不渲染
+ * 标题且双击缩放失效，故齐弃）。VS Code 同款方案：
+ * - `-webkit-app-region: drag` 拖拽区 → 原生拖动与双击缩放；
+ * - 居中显示 document.title（上游 DocumentTitle 投射“会话标题 — 产品名”）；
+ * - 背景直接解析上游 token `--dsw-specific-sidebar-fill`（body 计算值），
+ *   随上游主题切换实时正确，无需主进程回传；
+ * - body 注入等高 padding，上游 UI 下移不被遮挡；
+ * - 观察 title 变化与主题落点变化，幂等。与 WATCH_JS 共用观察点，
+ *   各自独立上报互不干扰。
+ */
+const SHELL_TITLEBAR_JS = `(() => {
+  const ID_BAR = '__dsh_desktop_titlebar'
+  const ID_PAD = '__dsh_desktop_titlebar_pad'
+  const H = ${SHELL_TITLEBAR_HEIGHT}
+  if (document.getElementById(ID_BAR)) return
+  const pad = document.createElement('style')
+  pad.id = ID_PAD
+  pad.textContent = 'body{padding-top:' + H + 'px;box-sizing:border-box}'
+  document.head.append(pad)
+
+  const bar = document.createElement('div')
+  bar.id = ID_BAR
+  bar.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'height:' + H + 'px',
+    'z-index:2147483647',
+    '-webkit-app-region:drag',
+    'display:flex', 'align-items:center', 'justify-content:center',
+    'font:500 13px -apple-system,"PingFang SC","Segoe UI",sans-serif',
+    'user-select:none',
+  ].join(';')
+  const label = document.createElement('span')
+  label.style.cssText = 'max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+  bar.append(label)
+
+  const apply = () => {
+    let color = ''
+    try { color = getComputedStyle(document.body).getPropertyValue('--dsw-specific-sidebar-fill').trim() } catch {}
+    const dark = document.body.hasAttribute('data-ds-dark-theme')
+      || document.documentElement.style.colorScheme === 'dark'
+    bar.style.background = color || (dark ? '#1B1B1C' : '#F9FAFB')
+    label.style.color = dark ? 'rgba(232,234,237,.9)' : 'rgba(26,29,33,.75)'
+    const t = (document.title || '').trim()
+    label.textContent = t || 'DeepSeek Harness'
+  }
+  const mount = () => {
+    document.body.append(bar)
+    apply()
+    new MutationObserver(apply).observe(document.documentElement, {
+      attributes: true, attributeFilter: ['style'],
+    })
+    new MutationObserver(apply).observe(document.body, {
+      attributes: true, attributeFilter: ['data-ds-dark-theme'],
+    })
+    const titleEl = document.querySelector('title')
+    if (titleEl) new MutationObserver(apply).observe(titleEl, {
+      childList: true, characterData: true, subtree: true,
+    })
+  }
+  if (document.body) mount()
+  else document.addEventListener('DOMContentLoaded', mount, { once: true })
 })()`
 
 /**
- * 同步 shell 窗口的原生 chrome 颜色：
- * - 窗口底色（加载间隙不闪色）；
- * - macOS 标题栏覆盖条颜色（真正的标题栏着色点——系统原生标题栏由
- *   系统材质绘制，backgroundColor 不影响它，必须用 WCO 覆盖条控制）。
+ * 同步 shell 窗口的窗口底色（加载间隙不闪色）。标题栏颜色由注入的
+ * 自绘标题栏直接解析上游 token，不经过主进程。
  */
 export function applyShellChromeTheme(win: BrowserWindow, pref: 'system' | 'light' | 'dark'): void {
   if (win.isDestroyed()) return
-  const color = themeBackgroundColor(pref)
-  win.setBackgroundColor(color)
-  if (process.platform === 'darwin' && typeof win.setTitleBarOverlay === 'function') {
-    try {
-      win.setTitleBarOverlay({ color })
-    } catch {
-      // 覆盖条不可用（窗口未启用 WCO 等）时静默降级为仅窗口底色
-    }
-  }
+  win.setBackgroundColor(themeBackgroundColor(pref))
 }
