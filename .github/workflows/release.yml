@@ -115,6 +115,18 @@ jobs:
             exit 1
           }
           echo "macOS 产物签名与公证校验通过"
+      - name: Electron node 形态冒烟（真机启动路径）
+        # v0.1.0 真机首启 crash-loop 的教训：系统 node 冒烟绿但真机挂
+        # （GUI 启动 PATH 无系统 node，回退 Electron 内置 node 后 HMR 的
+        # internal loader 链路不同）。必须用打包产物主二进制实际起服。
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          APP_BUNDLE="$(find dist -maxdepth 3 -name 'DSH Desktop.app' -type d | head -1)"
+          XDIR="$(mktemp -d)"
+          tar -xzf "$APP_BUNDLE/Contents/Resources/dsh-runtime.tar.gz" -C "$XDIR"
+          node scripts/smoke-runtime.mjs --dir "$XDIR" --exec "$APP_BUNDLE/Contents/MacOS/DSH Desktop"
+          rm -rf "$XDIR"
       - name: 收集安装包
         run: |
           mkdir -p dist-release
