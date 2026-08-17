@@ -12,13 +12,14 @@ import { app } from 'electron'
 import { dshManager } from './dsh-manager'
 import { registerIpc } from './ipc'
 import { installMenu, installTray, wireMenuRefresh } from './menu'
-import { closePanels, showBootstrap, showShellWindow } from './windows'
+import { closePanels, markQuitting, showBootstrap, showShellWindow } from './windows'
 import { terminalPanel } from './terminal-panel'
 import { previewPanel } from './preview-panel'
 import { fileActivity } from './file-activity'
 import { bundledRuntimeArchive, upstreamBuilt, upstreamCloned } from './dsh-contract'
 import { initUpdater } from './updater'
 import { applyNativeTheme, currentThemePref } from './theme-watcher'
+import { getSettings } from './store'
 
 /** splash 窗口引用（切到 shell 后关闭）。 */
 let bootstrap: Electron.BrowserWindow | null = null
@@ -60,9 +61,12 @@ app.whenReady().then(() => {
   dshManager.start()
 
   app.on('activate', () => {
-    // macOS dock 图标点击：优先回到 landing；工作台由用户从 landing 打开
-    if (bootstrap !== null && !bootstrap.isDestroyed()) bootstrap.show()
-    else {
+    // macOS dock 图标点击/Cmd+Tab 切回：优先回到 landing；工作台由
+    // 用户从 landing 打开（showShellWindow 对同实例只聚焦不重载）
+    if (bootstrap !== null && !bootstrap.isDestroyed()) {
+      if (bootstrap.isMinimized()) bootstrap.restore()
+      bootstrap.show()
+    } else {
       const url = dshManager.status.url
       if (url !== null) showShellWindow(url)
     }
@@ -75,8 +79,10 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (bootstrap !== null && !bootstrap.isDestroyed()) bootstrap.show()
-    else {
+    if (bootstrap !== null && !bootstrap.isDestroyed()) {
+      if (bootstrap.isMinimized()) bootstrap.restore()
+      bootstrap.show()
+    } else {
       const url = dshManager.status.url
       if (url !== null) showShellWindow(url)
     }
@@ -85,6 +91,7 @@ if (!gotLock) {
 
 /* ---------- 退出序列：优雅关停 dsh，绝不留孤儿进程 ---------- */
 app.on('before-quit', (event) => {
+  markQuitting() // 首位置位：主窗口 close 拦截放行，退出不被托盘保活挡死
   terminalPanel.dispose() // 杀内嵌终端 shell（SIGTERM 发出即离开）
   previewPanel.dispose()
   fileActivity.dispose() // 断开 mux 订阅
@@ -97,8 +104,9 @@ app.on('before-quit', (event) => {
 })
 
 app.on('window-all-closed', () => {
-  // 托盘常驻：由菜单/托盘“退出”收尾；非 macOS 直接退出
-  if (process.platform !== 'darwin') app.quit()
+  // 托盘常驻：由菜单/托盘“退出”收尾；非 macOS 直接退出。
+  // macOS + 偏好设置关掉保活：主窗口销毁即整链退出（停 dsh）
+  if (process.platform !== 'darwin' || !getSettings().keepRunningInTray) app.quit()
 })
 
 /* ---------- 终端信号兑底：dev 下 Ctrl+C 也不留孤儿 dsh ---------- */

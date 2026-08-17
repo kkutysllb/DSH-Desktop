@@ -30,6 +30,14 @@ const PRELOAD = join(__dirname, '../preload/index.js')
 let shellWindow: BrowserWindow | null = null
 const panels = new Map<string, BrowserWindow>()
 
+/** 退出意图标志：before-quit 置位后，主窗口 close 不再拦截（hide）。 */
+let quitting = false
+
+/** 标记应用进入退出序列（before-quit 首行调用）。 */
+export function markQuitting(): void {
+  quitting = true
+}
+
 /** 供菜单等处引用。 */
 export function getShellWindow(): BrowserWindow | null {
   return shellWindow
@@ -76,6 +84,16 @@ export function showShellWindow(dshUrl: string): void {
     })
     shellWindow.on('resized', persistBounds)
     shellWindow.on('moved', persistBounds)
+    // 托盘保活：关主窗口 = 隐藏（dsh 继续跑，SPA 状态保留，重新
+    // 打开不重载）；偏好设置页可关。真正退出走 before-quit
+    // （markQuitting 置位后放行销毁）
+    shellWindow.on('close', (event) => {
+      const w = shellWindow
+      if (!quitting && w !== null && !w.isDestroyed() && getSettings().keepRunningInTray) {
+        event.preventDefault()
+        w.hide()
+      }
+    })
     // 更新下载完成后：侧边栏 logo 旁出现安装按钮（注入器零侵入上游）
     attachUpdateInjector(shellWindow)
     // 主题跟随：上游 UI 主题切换 → 原生标题栏/菜单栏自适应（零侵入）
@@ -116,7 +134,16 @@ export function showShellWindow(dshUrl: string): void {
       callback(false)
     })
   }
-  void shellWindow.loadURL(dshUrl)
+  // 已在承载同一 dsh 实例 → 只恢复展示，绝不变相重载整页。
+  // macOS 下 dock 点击/Cmd+Tab 切回都会触发 activate → 此函数，
+  // 无条件 loadURL 会让每次窗口激活都整页刷新（会话重拉 + 样式
+  // 覆盖层/标题栏/徽章延迟重注入的双重闪烁）。
+  // dsh 重启端口变化 → 前缀不匹配 → 正常加载新实例（sync 流程）。
+  // SPA 内部路由（…/session/xxx）共享同一前缀，不会被误判为外部地址
+  if (!shellWindow.webContents.getURL().startsWith(dshUrl)) {
+    void shellWindow.loadURL(dshUrl)
+  }
+  if (shellWindow.isMinimized()) shellWindow.restore()
   if (!shellWindow.isVisible()) shellWindow.show()
   shellWindow.focus()
 }
@@ -132,7 +159,10 @@ function persistBounds(): void {
  * @param panel - 面板标识，同时是 hash 路由（#/diagnostics 等）。
  * @param title - 窗口标题。
  */
-export function openPanel(panel: 'setup' | 'diagnostics' | 'sync' | 'plugins', title: string): void {
+export function openPanel(
+  panel: 'setup' | 'diagnostics' | 'sync' | 'plugins' | 'preferences',
+  title: string,
+): void {
   const existing = panels.get(panel)
   if (existing !== undefined && !existing.isDestroyed()) {
     existing.show()

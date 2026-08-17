@@ -16,7 +16,6 @@ import { resolveAsset } from './dsh-contract'
 import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './updater'
 import { terminalPanel } from './terminal-panel'
 import { getShellWindow, openPanel, showShellWindow } from './windows'
-import { getSettings } from './store'
 import type { UpdateStatus } from '@shared/ipc-contract'
 
 let tray: Tray | null = null
@@ -85,6 +84,11 @@ export function installMenu(): void {
         },
         updateMenuItem(),
         { type: 'separator' },
+        {
+          label: '偏好设置…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => openPanel('preferences', '偏好设置 · DSH Desktop'),
+        },
         { role: 'services' },
         { type: 'separator' },
         { role: 'hide' },
@@ -146,6 +150,11 @@ export function installMenu(): void {
     {
       label: '工具',
       submenu: [
+        {
+          label: '偏好设置…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => openPanel('preferences', '偏好设置 · DSH Desktop'),
+        },
         {
           label: '切换内嵌终端',
           accelerator: 'Control+`',
@@ -232,6 +241,10 @@ export function installTray(): void {
     },
     { type: 'separator' },
     {
+      label: '偏好设置…',
+      click: () => openPanel('preferences', '偏好设置 · DSH Desktop'),
+    },
+    {
       label: '设置（上游初始化）…',
       click: () => openPanel('setup', '设置 · DSH Desktop'),
     },
@@ -268,9 +281,4 @@ export function wireMenuRefresh(): void {
     installMenu()
     installTray()
   })
-}
-
-/** 桌面常驻偏好（关闭主窗口不退出时托盘保活）。 */
-export function shouldKeepRunning(): boolean {
-  return getSettings().keepRunningInTray
 }
