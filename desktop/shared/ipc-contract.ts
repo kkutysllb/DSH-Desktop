@@ -255,6 +255,8 @@ export interface DesktopBridge {
   /** 用外部代码编辑器打开当前预览文件（探测 code/cursor/zed…）。 */
   previewOpenEditor(path: string): Promise<{ ok: boolean; error: string | null }>
   onPreviewActivity(cb: (e: PreviewEntry, focus: boolean) => void): () => void
+  /** 工作区切换通知（活动已换桶，视图应重拉 previewEntries）。 */
+  onPreviewRefresh(cb: () => void): () => void
   /* 偏好设置（样式定制/托盘保活；样式变更后主进程自动重注入 shell 窗口） */
   preferencesGet(): Promise<Preferences>
   preferencesSet(patch: Partial<Preferences>): Promise<Preferences>

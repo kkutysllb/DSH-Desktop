@@ -3,7 +3,8 @@
  * agent 读/编辑文件的活动流 + 内容预览（codex 预览面板同款）。
  *
  * - 活动数据：IPC preview:entries / preview:activity（主进程
- *   file-activity 聚合，同文件取最新）；内容按需 preview:read-file
+ *   file-activity 聚合，同文件取最新，按工作区分桶——切换工作区时
+ *   preview:refresh 通知重拉）；内容按需 preview:read-file
  *   读盘（跟随刷新 = 同文件新事件到达即重渲）；
  * - read 条目 → 文件当前内容（整段高亮后按行拆分，行号列）；
  *   edit 条目 → 行级 diff（上游 applied hunk：oldText/newText），
@@ -465,6 +466,18 @@ export async function mountPreview(root: HTMLElement): Promise<void> {
   entries.push(...initial)
   selected = entries.length > 0 ? entries[0].path : null
   render()
+
+  // 工作区切换：主进程已换桶，重拉列表（选中文件仍在新列表则保留）
+  bridge.onPreviewRefresh(async () => {
+    const fresh = await bridge.previewEntries()
+    entries.length = 0
+    entries.push(...fresh)
+    if (!fresh.some(e => e.path === selected)) {
+      selected = fresh.length > 0 ? fresh[0].path : null
+      mode = 'diff'
+    }
+    render()
+  })
 
   bridge.onPreviewActivity((entry, focus) => {
     const wasSelected = entry.path === selected

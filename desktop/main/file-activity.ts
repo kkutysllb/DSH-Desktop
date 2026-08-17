@@ -21,6 +21,15 @@
  * 生命周期跟随 dshManager：ready 即连（重启换端口自动重连），其余
  * 状态断开；活动按文件聚合（同文件取最新），上限 {@link MAX_ENTRIES}。
  *
+ * 工作区隔离：mux 流推送所有会话的活动，多工作区并存时直接入同一
+ * 张表会互串（预览抽屉显示别的工作区文件）。按「会话 → 工作区」
+ * 归属分桶存储——归属映射来自 workspace.list 的 sessionIds（主进程
+ * 自拉，5s 节流 + in-flight 去重）；映射未收录的新会话先按当前工作
+ * 区兜底（新会话总是在当前工作区创建），映射刷新后后续事件归位。
+ * 相对路径同样按归属工作区解析（不再用全局单一基准——后台工作区
+ * 的相对路径会被记到当前工作区名下）。list()/open() 只面向当前
+ * 工作区桶；跨工作区实时活动不转发（ipc.ts 按 workspaceOf 过滤）。
+ *
  * @module desktop/main/file-activity
  */
 
@@ -29,11 +38,14 @@ import { isAbsolute, join } from 'node:path'
 import { dshManager } from './dsh-manager'
 import type { PreviewEntry } from '@shared/ipc-contract'
 
-/** 聚合后的活动条目上限（超出丢最老）。 */
+/** 聚合后的活动条目上限（每工作区桶独立计算，超出丢最老）。 */
 const MAX_ENTRIES = 300
 
 /** 断线重连间隔（毫秒）。 */
 const RECONNECT_MS = 2_000
+
+/** 会话归属映射的刷新节流（毫秒；失败同样退避）。 */
+const MAPPING_TTL_MS = 5_000
 
 /** diff 行数统计的 DP 上限（乘积），超过退化为粗略计数。 */
 const LCS_CELL_LIMIT = 4_000_000
@@ -100,19 +112,26 @@ function countChanges(oldText: string | null, newText: string): { added: number;
 /** mux 帧的最小形状（只声明消费的字段）。 */
 interface MuxFrame {
   type: string
+  sessionId?: string
   event?: { type?: string }
   view?: { for?: string; view?: Record<string, unknown> }
 }
 
 /**
  * 订阅器单例。`setWorkspace` 由面板层喳进页面探针解析的工作区路径
- * （model-facing 相对路径 → 绝对路径的解析基准）。
+ * （当前显示哪个工作区的桶；相对 path 按归属工作区解析）。
  */
 class FileActivity extends EventEmitter {
-  private readonly byPath = new Map<string, PreviewEntry>()
+  /** 工作区路径 →（绝对路径 → 条目）：活动按工作区隔离，切换互不污染。 */
+  private readonly buckets = new Map<string, Map<string, PreviewEntry>>()
   private ws: WebSocket | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
-  private workspace: string | null = null
+  /** 当前页面选中的工作区（list()/open() 的目标桶；null = 无工作区）。 */
+  private activeWorkspace: string | null = null
+  /** sessionId → 工作区路径（workspace.list 的 sessionIds 归属）。 */
+  private readonly sessionWorkspace = new Map<string, string>()
+  private mappingAt = 0
+  private mappingBusy: Promise<void> | null = null
   /** 最近一次历史补拉的会话与时间（翻页重复上报去重）。 */
   private lastHistorySession = ''
   private lastHistoryAt = 0
@@ -127,23 +146,34 @@ class FileActivity extends EventEmitter {
     if (current.state === 'ready' && current.url !== null) this.connect(current.url)
   }
 
-  /** 页面探针解析的工作区路径（相对 path 的解析基准）。 */
+  /** 页面探针解析的当前工作区（变化时发 workspace-changed，视图重拉）。 */
   setWorkspace(path: string | null): void {
-    this.workspace = path
+    const next = path !== null && path !== '' ? path : null
+    if (next === this.activeWorkspace) return
+    this.activeWorkspace = next
+    this.emit('workspace-changed', next)
   }
 
-  /** 聚合条目（最新在前）。 */
+  /** 当前工作区桶键（无工作区时空串，桶仍可用但不常展示）。 */
+  activeKey(): string {
+    return this.activeWorkspace ?? ''
+  }
+
+  /** 聚合条目（最新在前；只含当前工作区）。 */
   list(): PreviewEntry[] {
-    return [...this.byPath.values()].reverse()
+    const bucket = this.buckets.get(this.activeKey())
+    return bucket === undefined ? [] : [...bucket.values()].reverse()
   }
 
   /**
    * 手动打开（正文文件链接接管）：已有条目复用（保留 edit 的 diff），
-   * 否则建 read 条目；返回后由面板层 show + focus 选中。
+   * 否则建 read 条目；返回后由面板层 show + focus 选中。入当前桶。
    */
   open(path: string): PreviewEntry {
-    const abs = this.resolve(path)
-    const existing = this.byPath.get(abs)
+    const wsKey = this.activeKey()
+    const abs = this.resolve(path, wsKey)
+    const bucket = this.bucketOf(wsKey)
+    const existing = bucket.get(abs)
     const entry: PreviewEntry = existing !== undefined
       ? { ...existing, at: Date.now() }
       : {
@@ -155,13 +185,9 @@ class FileActivity extends EventEmitter {
           lang: langOf(abs, null),
           diffs: null,
         }
-    this.byPath.delete(abs)
-    this.byPath.set(abs, entry)
-    while (this.byPath.size > MAX_ENTRIES) {
-      const oldest = this.byPath.keys().next().value
-      if (oldest === undefined) break
-      this.byPath.delete(oldest)
-    }
+    bucket.delete(abs)
+    bucket.set(abs, entry)
+    this.trim(bucket)
     return entry
   }
 
@@ -182,6 +208,10 @@ class FileActivity extends EventEmitter {
     const status = dshManager.status
     if (status.state !== 'ready' || status.url === null) return
     try {
+      // 先刷新归属映射：历史会话可能属于其他工作区（跨工作区点开），
+      // 兑现不了时（新会话）按当前工作区兑底
+      await this.refreshMapping()
+      const wsKey = this.workspaceOfSession(sessionId)
       // 与页面同源的 POST RPC（Node fetch 不带 Origin，loopback 受信）
       const resp = await fetch(`${status.url}/api/session.history`, {
         method: 'POST',
@@ -207,8 +237,8 @@ class FileActivity extends EventEmitter {
       for (const e of events) {
         // HistoryEntry.view 与 mux 帧同构（ToolEventView：for + view.card）
         if (e?.view?.for !== 'result' || e.view.view === undefined) continue
-        const entry = this.entryFromCard(e.view.view)
-        if (entry !== null) this.record(entry)
+        const entry = this.entryFromCard(e.view.view, wsKey)
+        if (entry !== null) this.record(entry, wsKey)
       }
     } catch {
       // dsh 重启间隙 / 响应非 JSON 等：静默，下次会话打开重试
@@ -269,18 +299,79 @@ class FileActivity extends EventEmitter {
     if (frame.event?.type !== 'tool/result') return
     const view = frame.view
     if (view?.for !== 'result' || view.view === undefined) return
-    const entry = this.entryFromCard(view.view)
+    const sessionId = typeof frame.sessionId === 'string' && frame.sessionId !== '' ? frame.sessionId : null
+    const wsKey = this.workspaceOfSession(sessionId)
+    const entry = this.entryFromCard(view.view, wsKey)
     if (entry === null) return
-    this.record(entry)
+    this.record(entry, wsKey)
+  }
+
+  /** 会话 → 归属工作区桶键；映射未收录时触发节流刷新，本帧先按当前工作区兑底。 */
+  private workspaceOfSession(sessionId: string | null): string {
+    if (sessionId !== null) {
+      const hit = this.sessionWorkspace.get(sessionId)
+      if (hit !== undefined) return hit
+      void this.refreshMapping()
+    }
+    return this.activeKey()
+  }
+
+  /** workspace.list → sessionWorkspace 全量重建（节流 + in-flight 去重）。 */
+  private refreshMapping(): Promise<void> {
+    if (this.mappingBusy !== null) return this.mappingBusy
+    const now = Date.now()
+    if (now - this.mappingAt < MAPPING_TTL_MS) return Promise.resolve()
+    const status = dshManager.status
+    if (status.state !== 'ready' || status.url === null) return Promise.resolve()
+    const url = status.url
+    this.mappingBusy = (async () => {
+      try {
+        const resp = await fetch(`${url}/api/workspace.list`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId: `dsh-desktop-wsmap-${now}`,
+            method: 'workspace.list',
+            payload: {},
+          }),
+        })
+        if (resp.ok) {
+          const body = JSON.parse(await resp.text()) as {
+            result?: { ok?: boolean; value?: { items?: unknown } }
+          }
+          const items = body.result?.ok === true ? body.result.value?.items : undefined
+          if (Array.isArray(items)) {
+            this.sessionWorkspace.clear()
+            for (const it of items) {
+              if (it === null || typeof it !== 'object') continue
+              const item = it as { path?: unknown; sessionIds?: unknown }
+              const path = typeof item.path === 'string' && item.path !== '' ? item.path : null
+              if (path === null || !Array.isArray(item.sessionIds)) continue
+              for (const sid of item.sessionIds) {
+                if (typeof sid === 'string' && sid !== '') this.sessionWorkspace.set(sid, path)
+              }
+            }
+          }
+        }
+      } catch {
+        // dsh 重启间隙 / 响应非 JSON 等：静默，下次触发重试
+      } finally {
+        // 成败都记时：失败也退避，避免每帧重试
+        this.mappingAt = Date.now()
+        this.mappingBusy = null
+      }
+    })()
+    return this.mappingBusy
   }
 
   /** view.view（card）→ 活动条目；不可识别的 card 返回 null。 */
-  private entryFromCard(card: Record<string, unknown>): PreviewEntry | null {
+  private entryFromCard(card: Record<string, unknown>, wsKey: string): PreviewEntry | null {
     if (card.card === 'read') {
       const path = typeof card.path === 'string' ? card.path : null
       if (path === null) return null
       return {
-        path: this.resolve(path),
+        path: this.resolve(path, wsKey),
         kind: 'read',
         at: Date.now(),
         added: 0,
@@ -297,7 +388,7 @@ class FileActivity extends EventEmitter {
         const newText = typeof (d as Record<string, unknown>).newText === 'string' ? (d as Record<string, unknown>).newText as string : null
         if (p === null || newText === null) return []
         const oldText = typeof (d as Record<string, unknown>).oldText === 'string' ? (d as Record<string, unknown>).oldText as string : null
-        return [{ path: this.resolve(p), oldText, newText }]
+        return [{ path: this.resolve(p, wsKey), oldText, newText }]
       })
       if (diffs.length === 0) return null
       // 首个 hunk 定位主文件（多文件 hunk 极罕见，badge 取合计）
@@ -321,23 +412,37 @@ class FileActivity extends EventEmitter {
     return null
   }
 
-  /** 入列（同文件聚合、上限淘汰）+ 通知监听方。 */
-  private record(entry: PreviewEntry): void {
-    this.byPath.delete(entry.path)
-    this.byPath.set(entry.path, entry)
-    while (this.byPath.size > MAX_ENTRIES) {
-      const oldest = this.byPath.keys().next().value
-      if (oldest === undefined) break
-      this.byPath.delete(oldest)
-    }
-    this.emit('activity', entry)
+  /** 入列（同文件聚合、上限淘汰）+ 通知监听方（带桶键供过滤）。 */
+  private record(entry: PreviewEntry, wsKey: string): void {
+    const bucket = this.bucketOf(wsKey)
+    bucket.delete(entry.path)
+    bucket.set(entry.path, entry)
+    this.trim(bucket)
+    this.emit('activity', entry, wsKey)
   }
 
-  /** model-facing path → 绝对路径（绝对用之；相对按工作区解析）。 */
-  private resolve(path: string): string {
+  /** 桶懒建（工作区数量级小，无回收）。 */
+  private bucketOf(wsKey: string): Map<string, PreviewEntry> {
+    let bucket = this.buckets.get(wsKey)
+    if (bucket === undefined) {
+      bucket = new Map()
+      this.buckets.set(wsKey, bucket)
+    }
+    return bucket
+  }
+
+  private trim(bucket: Map<string, PreviewEntry>): void {
+    while (bucket.size > MAX_ENTRIES) {
+      const oldest = bucket.keys().next().value
+      if (oldest === undefined) break
+      bucket.delete(oldest)
+    }
+  }
+
+  /** model-facing path → 绝对路径（绝对用之；相对按归属工作区解析）。 */
+  private resolve(path: string, wsKey: string): string {
     if (isAbsolute(path)) return path
-    const ws = this.workspace
-    return ws !== null && ws !== '' ? join(ws, path) : path
+    return wsKey !== '' ? join(wsKey, path) : path
   }
 }
 

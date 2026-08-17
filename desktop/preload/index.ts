@@ -87,6 +87,11 @@ const bridge: DesktopBridge = {
     ipcRenderer.on('preview:activity', listener)
     return () => ipcRenderer.removeListener('preview:activity', listener)
   },
+  onPreviewRefresh: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('preview:refresh', listener)
+    return () => ipcRenderer.removeListener('preview:refresh', listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('dshDesktop', bridge)

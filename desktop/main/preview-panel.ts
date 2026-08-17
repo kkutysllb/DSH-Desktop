@@ -385,10 +385,20 @@ class PreviewPanel {
     }
     webContents.on('console-message', onConsole)
     webContents.on('did-finish-load', onDidLoad)
+    // 工作区切换：预览视图重拉列表（分桶后 list() 只含当前工作区），
+    // 正文徽章也按当前桶重推（隐藏中的视图同样接收，重开即新鲜）
+    const onWsChanged = (): void => {
+      if (win.isDestroyed()) return
+      this.pushAllStats()
+      const wc = this.view?.webContents
+      if (wc !== undefined && !wc.isDestroyed()) wc.send('preview:refresh')
+    }
+    fileActivity.on('workspace-changed', onWsChanged)
     win.on('resize', () => { if (this.visible) this.layout() })
     win.once('closed', () => {
       webContents.removeListener('console-message', onConsole)
       webContents.removeListener('did-finish-load', onDidLoad)
+      fileActivity.removeListener('workspace-changed', onWsChanged)
       this.destroyView()
       this.win = null
     })
