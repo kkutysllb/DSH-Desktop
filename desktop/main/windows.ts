@@ -18,6 +18,7 @@ import { attachUpdateInjector } from './update-injector'
 import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
 import { attachStyleOverlay } from './style-overlay'
 import { attachStatsHover } from './stats-hover'
+import { attachPicker } from './attach-picker'
 import { terminalPanel } from './terminal-panel'
 import { previewPanel } from './preview-panel'
 import { getSettings, saveSettings } from './store'
@@ -104,6 +105,9 @@ export function showShellWindow(dshUrl: string): void {
     // 会话统计图表面板：hover 输入框下方缩略条 → 底部弹出自绘图表
     //（零侵入：拦截该行 hover 压制上游文本 Tooltip）
     attachStatsHover(shellWindow)
+    // 附件选择器：drag-to-attachment 插件的模式切换按钮 → 点击改为
+    // 打开原生文件对话框（真实路径经插件 fast path 直接入队）
+    attachPicker(shellWindow)
     // 内嵌终端面板：底部真实终端（pty + xterm），页面探针/按钮注入
     // （按钮宿主是自绘标题栏，仅 darwin）
     if (process.platform === 'darwin') terminalPanel.attach(shellWindow)
