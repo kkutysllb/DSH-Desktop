@@ -132,7 +132,12 @@ export function themeBackgroundColor(pref: 'system' | 'light' | 'dark' = getSett
  * 自绘标题栏（页面上下文）：替代系统标题栏（WCO 覆盖条在 macOS 不渲染
  * 标题且双击缩放失效，故齐弃）。VS Code 同款方案：
  * - `-webkit-app-region: drag` 拖拽区 → 原生拖动与双击缩放；
- * - 居中显示 document.title（上游 DocumentTitle 投射“会话标题 — 产品名”）；
+ * - 靠左显示 document.title（上游 DocumentTitle 投射“会话标题 — 产品名”），
+ *   起排在中间会话列左缘（侧边栏右边线 + 12px，探测 sidebarCol 实时
+ *   广播为 --dsh-sidebar-w，拖宽/折叠动画平滑跟随；侧边栏收起时保底
+ *   红绿灯区 78px）；max-width 自适应避让：右侧取按钮带（96px）与
+ *   文件预览抽屉宽度（--dsh-preview-inset，抽屉是全高 WebContentsView、
+ *   打开时盖住标题栏右段）之大者，长标题省略号截断不钻抽屉底下；
  * - 背景直接解析上游 token `--dsw-specific-sidebar-fill`（body 计算值），
  *   随上游主题切换实时正确，无需主进程回传；
  * - body 注入等高 padding，上游 UI 下移不被遮挡；
@@ -155,13 +160,33 @@ const SHELL_TITLEBAR_JS = `(() => {
     'position:fixed', 'top:0', 'left:0', 'right:0', 'height:' + H + 'px',
     'z-index:2147483647',
     '-webkit-app-region:drag',
-    'display:flex', 'align-items:center', 'justify-content:center',
+    'display:flex', 'align-items:center', 'justify-content:flex-start',
     'font:500 13px -apple-system,"PingFang SC","Segoe UI",sans-serif',
     'user-select:none',
   ].join(';')
   const label = document.createElement('span')
-  label.style.cssText = 'max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+  label.style.cssText = [
+    'flex:0 1 auto',
+    'margin-left:max(78px, var(--dsh-sidebar-w, 0px) + 12px)',
+    'max-width:calc(100% - max(78px, var(--dsh-sidebar-w, 0px) + 12px) - max(96px, var(--dsh-preview-inset, 0px)))',
+    'overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap',
+  ].join(';')
   bar.append(label)
+
+  /* 侧边栏右边线探测：标题起排跟随（与终端/预览面板的 sidebarCol
+     探针同款；SPA 首帧可能未挂，rAF 轮询等待）。宽度写为 CSS 变量，
+     上面 margin/max-width 纯 CSS 消费，拖宽/折叠动画实时重算 */
+  const watchSidebarCol = () => {
+    const el = document.querySelector('[class*="sidebarCol"]')
+    if (el == null) { requestAnimationFrame(watchSidebarCol); return }
+    const push = () => {
+      document.documentElement.style.setProperty(
+        '--dsh-sidebar-w', Math.round(el.getBoundingClientRect().width) + 'px')
+    }
+    new ResizeObserver(push).observe(el)
+    push()
+  }
+  watchSidebarCol()
 
   const apply = () => {
     let color = ''
