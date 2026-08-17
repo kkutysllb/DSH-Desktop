@@ -24,7 +24,8 @@
  *
  * 上游相关样式：ui-theme/src/styles/gradient-shadow-text.css（排版
  * token）、ui-conversation MessageItem/AssistantMarkdown.module.css
- * （气泡/正文）、ui-primitives markdown/CodeBlock.module.css（代码块）。
+ * （气泡/正文）、ui-primitives markdown/CodeBlock.module.css（代码块）、
+ * ui-trajectory（轨迹页：作用域锚 data-conversation-composer-overlay）。
  *
  * @module desktop/main/style-overlay
  */
@@ -86,6 +87,60 @@ const CONTENT_WIDTHS: Record<Exclude<StyleSettings['contentWidth'], 'narrow'>, n
   wide: 960,
   extra: 1080,
 }
+
+/**
+ * 轨迹页（Trajectory 视图）精致打磨段：数据与功能不动，纯视觉微调。
+ *
+ * 作用域锚点 data-conversation-composer-overlay 全上游唯一（仅
+ * TrajectoryView 根节点携带）——所有选择器挂在它下面即可完全避开
+ * 同名类冲突（作用域内类名可放心子串匹配）；表格结构用标签/数据
+ * 属性选择器（table/tr/td、data-* 比类名更稳，上游重构样式也不破）。
+ * 跟随 enabled 总开关，不跟 density（工具页节奏独立于正文偏好）。
+ * 深浅主题全 token 化自适应；上游类/属性改名 → 静默失效回原样。
+ */
+const TRAJECTORY_CSS = `
+/* 行高节奏：30→32px（request-only/collapsed/terminal 等特殊行高的
+   上游规则不动，:not 排除避免覆盖） */
+[data-conversation-composer-overlay] table tbody
+tr:not([data-request-only='true']):not([data-collapsed-summary]):not([data-terminal-request-boundary='true']) > td {
+  height: 32px;
+}
+/* 轮次分隔线细化：2→1px */
+[data-conversation-composer-overlay] table tbody
+tr[data-turn-start='true']:not(:first-child) > td::before {
+  height: 1px;
+}
+/* 错误行极淡红底（hover 加深一档；td 层覆盖会遮 tr 层 hover 背景，
+   故错误行 hover 自带加深；选中态仍有 3px selectionRail 蓝轨） */
+[data-conversation-composer-overlay] table tbody tr[data-error='true'] > td {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 4%, transparent);
+}
+[data-conversation-composer-overlay] table tbody tr[data-error='true']:hover > td {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+}
+/* 徽章圆角 4→5（与整体圆角语言一致）；轮次标签 8→9px 更清晰 */
+[data-conversation-composer-overlay] [class*="_kindTag"] { border-radius: 5px; }
+[data-conversation-composer-overlay] [class*="_turnLabel"] { font-size: 9px; }
+/* 时间线色块圆角 1→2px（数据属性选择器，不碰类名） */
+[data-conversation-composer-overlay] span[data-timeline-span] { border-radius: 2px; }
+/* 详情侧栏浮起阴影（宽屏分栏形态；窄屏浮层自带阴影） */
+@media (min-width: 761px) {
+  [data-conversation-composer-overlay] [class*="_details"] {
+    box-shadow: -8px 0 24px rgba(9, 16, 29, .05);
+  }
+  body[data-ds-dark-theme] [data-conversation-composer-overlay] [class*="_details"] {
+    box-shadow: -8px 0 24px rgba(0, 0, 0, .3);
+  }
+}
+/* 详情 tab hover 圆角化 */
+[data-conversation-composer-overlay] [class*="_detailTab"] { border-radius: 5px; }
+/* 工具栏：按钮圆角 3→5、搜索框 4→6 且高 22→24 */
+[data-conversation-composer-overlay] [class*="_toggle"],
+[data-conversation-composer-overlay] [class*="_action"] { border-radius: 5px; }
+[data-conversation-composer-overlay] [class*="_search"] {
+  border-radius: 6px;
+  height: 24px;
+}`
 
 /**
  * 按档位生成覆盖 CSS。空串 = 移除覆盖标签，完全回上游原样。
@@ -159,6 +214,9 @@ ${bubbleText}}`)
 
   // ---- 深色主题：气泡与背景（900）对比拉开一档 ----
   sections.push('body[data-ds-dark-theme] { --dsw-specific-bubble: var(--dsw-static-neutral-bluish-800); }')
+
+  // ---- 轨迹页精致打磨（跟随 enabled 总开关，不跟 density 档位） ----
+  sections.push(TRAJECTORY_CSS)
 
   return sections.join('\n\n')
 }
