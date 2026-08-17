@@ -90,8 +90,17 @@ const PAGE_JS = `(() => {
         b.setAttribute('data-val', val)
         b.setAttribute('data-plain', plainCls)
         b.title = hint
-        b.textContent = label
+        // 双行方块（上游 cube 是 icon-over-label 两行视觉，这里用
+        // label + hint 填充：主行继承 cube 14px primary，副行同上游
+        // 设置行 desc 规格 12px tertiary）
+        const l1 = document.createElement('span')
+        l1.textContent = label
+        const l2 = document.createElement('span')
+        l2.textContent = hint
+        l2.style.cssText = 'font-size:12px;line-height:16px;font-weight:400;color:var(--dsw-alias-label-tertiary,#9aa1ac);'
+        b.append(l1, l2)
         b.addEventListener('click', () => {
+          if (b.disabled) return
           if (key === 'enabled') state.enabled = val === 'on'
           else if (key === 'density') state.density = val
           else state.contentWidth = val
