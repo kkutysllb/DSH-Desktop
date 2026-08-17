@@ -17,6 +17,7 @@ import { installUpdate } from './updater'
 import { attachUpdateInjector } from './update-injector'
 import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
 import { attachStyleOverlay } from './style-overlay'
+import { attachStatsHover } from './stats-hover'
 import { terminalPanel } from './terminal-panel'
 import { previewPanel } from './preview-panel'
 import { getSettings, saveSettings } from './store'
@@ -100,6 +101,9 @@ export function showShellWindow(dshUrl: string): void {
     attachThemeWatcher(shellWindow)
     // 消息样式覆盖层：排版 token/气泡/代码块微调（零侵入，token 改名静默失效）
     attachStyleOverlay(shellWindow)
+    // 会话统计图表面板：hover 输入框下方缩略条 → 底部弹出自绘图表
+    //（零侵入：拦截该行 hover 压制上游文本 Tooltip）
+    attachStatsHover(shellWindow)
     // 内嵌终端面板：底部真实终端（pty + xterm），页面探针/按钮注入
     // （按钮宿主是自绘标题栏，仅 darwin）
     if (process.platform === 'darwin') terminalPanel.attach(shellWindow)

@@ -216,6 +216,8 @@ const PAGE_JS = `(() => {
 
   /* ---- 内容区右侧让位（主进程每次布局时调用；W=0 清除）---- */
   window.__dshPreviewPad = (W) => {
+    // 几何广播：自绘固定定位面板（如统计图表）按可用区自适应避让
+    document.documentElement.style.setProperty('--dsh-preview-inset', W > 0 ? W + 'px' : '0px')
     const cols = document.querySelectorAll('[class*="centerCol"], [class*="detailsCol"]')
     for (const el of cols) {
       if (W > 0) el.style.paddingRight = W + 'px'

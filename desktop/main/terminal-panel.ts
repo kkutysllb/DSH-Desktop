@@ -181,6 +181,8 @@ const PAGE_JS = `(() => {
 
   /* ---- 内容区让位（主进程每次布局时调用；H=0 清除）---- */
   window.__dshTerminalPad = (H) => {
+    // 几何广播：自绘固定定位面板（如统计图表）按可用区自适应避让
+    document.documentElement.style.setProperty('--dsh-terminal-inset', H > 0 ? H + 'px' : '0px')
     const cols = document.querySelectorAll('[class*="centerCol"], [class*="detailsCol"]')
     for (const el of cols) {
       if (H > 0) el.style.paddingBottom = H + 'px'
