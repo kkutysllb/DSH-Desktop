@@ -35,6 +35,25 @@ export interface DshLogLine {
   at: number
 }
 
+/* ---------- 桌面壳偏好设置 ---------- */
+
+/** 界面样式定制（预设档位；生效与否由 style-overlay 按此生成 CSS）。 */
+export interface StyleSettings {
+  /** 总开关：false = 完全回上游原样。 */
+  enabled: boolean
+  /** 正文密度：compact=14/22（默认）、standard=15/25、native=上游 16/28。 */
+  density: 'compact' | 'standard' | 'native'
+  /** 消息列宽：narrow=748（上游原生）、wide=960、extra=1080（默认）。 */
+  contentWidth: 'narrow' | 'wide' | 'extra'
+}
+
+/** 偏好设置页可读写的全部桌面壳偏好（样式 + 通用）。 */
+export interface Preferences {
+  style: StyleSettings
+  /** 关闭主窗口时最小化到托盘（false = 直接退出 dsh 与应用）。 */
+  keepRunningInTray: boolean
+}
+
 /* ---------- 上游仓库 ---------- */
 
 /** 上游克隆的状态快照。 */
@@ -236,6 +255,9 @@ export interface DesktopBridge {
   /** 用外部代码编辑器打开当前预览文件（探测 code/cursor/zed…）。 */
   previewOpenEditor(path: string): Promise<{ ok: boolean; error: string | null }>
   onPreviewActivity(cb: (e: PreviewEntry, focus: boolean) => void): () => void
+  /* 偏好设置（样式定制/托盘保活；样式变更后主进程自动重注入 shell 窗口） */
+  preferencesGet(): Promise<Preferences>
+  preferencesSet(patch: Partial<Preferences>): Promise<Preferences>
   /* 事件订阅（返回退订函数） */
   onDshStateChanged(cb: (s: DshStatus) => void): () => void
   onDshLog(cb: (l: DshLogLine) => void): () => void

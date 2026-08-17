@@ -8,7 +8,7 @@
  */
 
 import { BrowserWindow, clipboard, ipcMain, shell } from 'electron'
-import { showShellWindow } from './windows'
+import { getShellWindow, showShellWindow } from './windows'
 import { dshManager } from './dsh-manager'
 import { progressEvents, setupUpstream, syncUpstream, upstreamStatus } from './upstream'
 import { communityPlugins, installedPlugins, runPluginCommand } from './plugins'
@@ -16,11 +16,23 @@ import { checkForUpdates, installUpdate, updateEvents, updateStatus } from './up
 import { terminalPanel, terminalTheme } from './terminal-panel'
 import { previewPanel, openInEditor } from './preview-panel'
 import { fileActivity } from './file-activity'
+import { refreshStyleOverlay } from './style-overlay'
+import { getSettings, saveSettings } from './store'
 import { readFile, stat } from 'node:fs/promises'
-import type { UpstreamProgress, PreviewFileContent } from '@shared/ipc-contract'
+import type { Preferences, StyleSettings, UpstreamProgress, PreviewFileContent } from '@shared/ipc-contract'
 
 /** preview:read-file 的文件大小上限（超出截断）。 */
 const PREVIEW_FILE_LIMIT = 1_000_000
+
+/** 偏好设置合法档位枚举（非法 patch 丢弃，防御性校验）。 */
+const DENSITY_VALUES: StyleSettings['density'][] = ['compact', 'standard', 'native']
+const WIDTH_VALUES: StyleSettings['contentWidth'][] = ['narrow', 'wide', 'extra']
+
+/** 当前偏好快照（偏好设置页可读写的子集）。 */
+function preferences(): Preferences {
+  const s = getSettings()
+  return { style: s.style, keepRunningInTray: s.keepRunningInTray }
+}
 
 /** 安装全部 IPC 处理器与事件桥。 */
 export function registerIpc(): void {
@@ -145,6 +157,30 @@ export function registerIpc(): void {
     if (entry.kind === 'edit') {
       previewPanel.pushFileStat(entry.path, entry.added, entry.removed)
     }
+  })
+
+  /* ---- 偏好设置（样式档位/托盘保活；写后即时生效） ---- */
+  ipcMain.handle('preferences:get', () => preferences())
+  ipcMain.handle('preferences:set', (_event, patch: Partial<Preferences>) => {
+    if (patch === null || typeof patch !== 'object') return preferences()
+    const current = getSettings()
+    if (patch.style !== null && typeof patch.style === 'object') {
+      const p = patch.style
+      const next: StyleSettings = {
+        enabled: typeof p.enabled === 'boolean' ? p.enabled : current.style.enabled,
+        density: DENSITY_VALUES.includes(p.density) ? p.density : current.style.density,
+        contentWidth: WIDTH_VALUES.includes(p.contentWidth) ? p.contentWidth : current.style.contentWidth,
+      }
+      saveSettings({ style: next })
+      // 样式变更 → 立即重注入 shell 窗口（不等下次整页加载）
+      const w = getShellWindow()
+      if (w !== null && !w.isDestroyed()) refreshStyleOverlay(w)
+    }
+    if (typeof patch.keepRunningInTray === 'boolean') {
+      // 托盘保活是每次关窗时读 store 判定，写完即生效，无需广播
+      saveSettings({ keepRunningInTray: patch.keepRunningInTray })
+    }
+    return preferences()
   })
 
   /* ---- 事件广播（面板窗口存在才有听众） ---- */

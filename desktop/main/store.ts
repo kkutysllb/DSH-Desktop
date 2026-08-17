@@ -10,6 +10,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import type { StyleSettings } from '@shared/ipc-contract'
+
+/** 样式定制的默认档（与 style-overlay 定值表一致：紧凑密度 + 1080 列宽）。 */
+export const DEFAULT_STYLE: StyleSettings = {
+  enabled: true,
+  density: 'compact',
+  contentWidth: 'extra',
+}
 
 /** 持久化的设置形状。 */
 export interface DesktopSettings {
@@ -23,6 +31,8 @@ export interface DesktopSettings {
   terminalHeight: number | null
   /** 文件预览抽屉宽度（拖拽调节后记住）。 */
   previewWidth: number | null
+  /** 界面样式定制（预设档位，见 style-overlay）。 */
+  style: StyleSettings
 }
 
 const DEFAULTS: DesktopSettings = {
@@ -31,6 +41,7 @@ const DEFAULTS: DesktopSettings = {
   lastTheme: 'system',
   terminalHeight: null,
   previewWidth: null,
+  style: DEFAULT_STYLE,
 }
 
 let cache: DesktopSettings | null = null
@@ -44,7 +55,7 @@ export function getSettings(): DesktopSettings {
   if (cache !== null) return cache
   try {
     const raw = JSON.parse(readFileSync(storePath(), 'utf8')) as Partial<DesktopSettings>
-    cache = { ...DEFAULTS, ...raw }
+    cache = { ...DEFAULTS, ...raw, style: { ...DEFAULT_STYLE, ...raw.style } }
   } catch {
     cache = { ...DEFAULTS }
   }

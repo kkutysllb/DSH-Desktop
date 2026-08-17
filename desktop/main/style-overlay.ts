@@ -6,6 +6,11 @@
  * 后到者赢的层叠规则直接改写 token 值；个别写死在 CSS Modules 规则
  * 里的值（气泡宽度/圆角等）用属性选择器匹配 scoped 产物类名。
  *
+ * 档位驱动（偏好设置页可调，store 持久化）：density=native /
+ * contentWidth=narrow 档直接不输出对应段——不覆盖即上游原生值，
+ * 比手写复位值更稳（上游日后调整也能跟）；enabled=false 输出空串
+ * （移除标签，完全回上游原样）。
+ *
  * 产物类名含「_+原类名」子串，但 hash 位置随构建形态不同（dsh 运行
  * 时即时编译是 _<hash>_<类名>，vite build 是 _<类名>_<hash>）——
  * 一律按「_+类名」子串匹配（如 [class*="_userStack"]），不依赖
@@ -17,89 +22,162 @@
  * 主题适配纯 CSS 完成：上游深色主题挂 body[data-ds-dark-theme]，
  * 覆盖层用同一宿主选择器写深色差异，无需监听主题事件重注入。
  *
- * 脆性边界：上游改名 token/类名 → 覆盖静默失效、显示回原样，
- * 不崩不错位（与 sidebarCol 探针同一可靠性等级）。上游相关样式：
- * ui-theme/src/styles/gradient-shadow-text.css（排版 token）、
- * ui-conversation MessageItem/AssistantMarkdown.module.css（气泡/正文）、
- * ui-primitives markdown/CodeBlock.module.css（代码块）。
+ * 上游相关样式：ui-theme/src/styles/gradient-shadow-text.css（排版
+ * token）、ui-conversation MessageItem/AssistantMarkdown.module.css
+ * （气泡/正文）、ui-primitives markdown/CodeBlock.module.css（代码块）。
  *
  * @module desktop/main/style-overlay
  */
 
 import type { BrowserWindow } from 'electron'
+import type { StyleSettings } from '@shared/ipc-contract'
+import { getSettings } from './store'
 
-/** 注入的 style 元素 id（幂等替换）。 */
+/** 注入的 style 元素 id（幂等替换；SPA 内部导航不清 head）。 */
 const STYLE_ID = '__dsh_desktop_style_override'
 
+/** 一档排版定值：[字号px, 行高px]。 */
+type LineSpec = readonly [number, number]
+
+/** shorthand 形式（font: 400 14px/22px …）。 */
+const lh = (spec: LineSpec): string => `${String(spec[0])}px/${String(spec[1])}px`
+
 /**
- * 覆盖样式。定值取向：中文排版密度（16/28 正文对 13" 屏偏松）、
- * 气泡更利落（22px 圆角 → 16px，宽度上限放宽利用宽屏）、标题层级
- * 收敛（h1-h4 与正文比例更协调）、深色主题气泡与背景对比拉开一档。
+ * 密度档位定值梯度（native 档不覆盖，不在表内）。
+ * compact 是长期验证档；气泡沿用上游「比正文 +1px」惯例。
  */
-const OVERRIDE_CSS = `
-/* ---- 排版 token（shorthand + longhand 双写：部分组件用 longhand） ---- */
-:root {
-  --dsw-font-markdown-base: 400 14px/22px var(--dsw-font-family);
-  --dsw-font-markdown-base-font-family: var(--dsw-font-family);
-  --dsw-font-markdown-base-font-weight: 400;
-  --dsw-font-markdown-base-font-size: 14px;
-  --dsw-font-markdown-base-font-style: normal;
-  --dsw-font-markdown-base-line-height: 22px;
-  --dsw-font-markdown-base-strong: 600 14px/22px var(--dsw-font-family);
-  --dsw-font-markdown-base-strong-font-size: 14px;
-  --dsw-font-markdown-base-strong-line-height: 22px;
-  --dsw-font-markdown-h1: 700 21px/30px var(--dsw-font-family);
-  --dsw-font-markdown-h1-font-size: 21px;
-  --dsw-font-markdown-h1-line-height: 30px;
-  --dsw-font-markdown-h2: 700 19px/28px var(--dsw-font-family);
-  --dsw-font-markdown-h2-font-size: 19px;
-  --dsw-font-markdown-h2-line-height: 28px;
-  --dsw-font-markdown-h3: 600 17px/26px var(--dsw-font-family);
-  --dsw-font-markdown-h3-font-size: 17px;
-  --dsw-font-markdown-h3-line-height: 26px;
-  --dsw-font-markdown-h4: 600 15px/24px var(--dsw-font-family);
-  --dsw-font-markdown-h4-font-size: 15px;
-  --dsw-font-markdown-h4-line-height: 24px;
-  --dsw-font-markdown-code-block: 13px/21px var(--ds-font-family-code);
-  --dsw-font-markdown-code-block-font-size: 13px;
-  --dsw-font-markdown-code-block-line-height: 21px;
+const DENSITIES: Record<
+  Exclude<StyleSettings['density'], 'native'>,
+  {
+    base: LineSpec
+    strong: LineSpec
+    h1: LineSpec
+    h2: LineSpec
+    h3: LineSpec
+    h4: LineSpec
+    code: LineSpec
+    bubble: LineSpec
+  }
+> = {
+  compact: {
+    base: [14, 22],
+    strong: [14, 22],
+    h1: [21, 30],
+    h2: [19, 28],
+    h3: [17, 26],
+    h4: [15, 24],
+    code: [13, 21],
+    bubble: [15, 23],
+  },
+  standard: {
+    base: [15, 25],
+    strong: [15, 25],
+    h1: [22, 32],
+    h2: [20, 30],
+    h3: [18, 28],
+    h4: [16, 26],
+    code: [13, 22],
+    bubble: [16, 25],
+  },
 }
 
-/* ---- 用户气泡：宽度上限放宽（宽屏）+ 圆角/内距/字号利落化。
-   bubble 类跨文件同名（Tooltip/MessageItem/GoalCommandInput 三处），
-   用「userStack 后代」结构判别锁定 MessageItem 的那一处（userStack
-   全仓唯一）；两个选择器均按「_+类名」子串匹配，对 hash 位置无感 */
-[class*="_userStack"] { max-width: min(640px, 88%) !important; }
+/** 列宽档位 → 内容宽度 px（narrow 档不覆盖，不在表内）。 */
+const CONTENT_WIDTHS: Record<Exclude<StyleSettings['contentWidth'], 'narrow'>, number> = {
+  wide: 960,
+  extra: 1080,
+}
+
+/**
+ * 按档位生成覆盖 CSS。空串 = 移除覆盖标签，完全回上游原样。
+ * @module 内部导出仅供测试/诊断；注入一律走 refreshStyleOverlay。
+ */
+export function buildOverlayCss(style: StyleSettings): string {
+  if (!style.enabled) return ''
+  const sections: string[] = []
+
+  if (style.density !== 'native') {
+    const d = DENSITIES[style.density]
+    // shorthand + longhand 双写：部分组件消费 longhand 变量
+    sections.push(`/* ---- 排版 token（${style.density} 档） ---- */
+:root {
+  --dsw-font-markdown-base: 400 ${lh(d.base)} var(--dsw-font-family);
+  --dsw-font-markdown-base-font-family: var(--dsw-font-family);
+  --dsw-font-markdown-base-font-weight: 400;
+  --dsw-font-markdown-base-font-size: ${String(d.base[0])}px;
+  --dsw-font-markdown-base-font-style: normal;
+  --dsw-font-markdown-base-line-height: ${String(d.base[1])}px;
+  --dsw-font-markdown-base-strong: 600 ${lh(d.strong)} var(--dsw-font-family);
+  --dsw-font-markdown-base-strong-font-size: ${String(d.strong[0])}px;
+  --dsw-font-markdown-base-strong-line-height: ${String(d.strong[1])}px;
+  --dsw-font-markdown-h1: 700 ${lh(d.h1)} var(--dsw-font-family);
+  --dsw-font-markdown-h1-font-size: ${String(d.h1[0])}px;
+  --dsw-font-markdown-h1-line-height: ${String(d.h1[1])}px;
+  --dsw-font-markdown-h2: 700 ${lh(d.h2)} var(--dsw-font-family);
+  --dsw-font-markdown-h2-font-size: ${String(d.h2[0])}px;
+  --dsw-font-markdown-h2-line-height: ${String(d.h2[1])}px;
+  --dsw-font-markdown-h3: 600 ${lh(d.h3)} var(--dsw-font-family);
+  --dsw-font-markdown-h3-font-size: ${String(d.h3[0])}px;
+  --dsw-font-markdown-h3-line-height: ${String(d.h3[1])}px;
+  --dsw-font-markdown-h4: 600 ${lh(d.h4)} var(--dsw-font-family);
+  --dsw-font-markdown-h4-font-size: ${String(d.h4[0])}px;
+  --dsw-font-markdown-h4-line-height: ${String(d.h4[1])}px;
+  --dsw-font-markdown-code-block: ${lh(d.code)} var(--ds-font-family-code);
+  --dsw-font-markdown-code-block-font-size: ${String(d.code[0])}px;
+  --dsw-font-markdown-code-block-line-height: ${String(d.code[1])}px;
+}`)
+  }
+
+  // ---- 用户气泡：宽度上限放宽（宽屏）+ 圆角/内距利落化。
+  // bubble 类跨文件同名（Tooltip/MessageItem/GoalCommandInput 三处），
+  // 用「userStack 后代」结构判别锁定 MessageItem 的那一处（userStack
+  // 全仓唯一）；两个选择器均按「_+类名」子串匹配，对 hash 位置无感。
+  // 字号/行高只在非 native 密度下写（native = 上游原值）。
+  const bubbleText =
+    style.density !== 'native'
+      ? `  font-size: ${String(DENSITIES[style.density].bubble[0])}px !important;
+  line-height: ${String(DENSITIES[style.density].bubble[1])}px !important;
+`
+      : ''
+  sections.push(`[class*="_userStack"] { max-width: min(640px, 88%) !important; }
 [class*="_userStack"] [class*="_bubble"] {
   border-radius: 16px !important;
   padding: 8px 14px !important;
-  font-size: 15px !important;
-  line-height: 23px !important;
+${bubbleText}}`)
+
+  // ---- 代码块：圆角收敛（局部变量重定义，banner 顶角自动跟随）。
+  // _block 是常见类名，泛匹配仅定义一个局部变量——非 CodeBlock 的
+  // block 后代不消费 --dsl-code-block-border-radius，零视觉副作用
+  sections.push('[class*="_block"] { --dsl-code-block-border-radius: 10px; }')
+
+  // ---- 消息列宽：定义方（ConversationRoot 容器）与消费方（ChatView/
+  // 输入卡等）同用 _root 类名；泛匹配把宽度广播到所有 root，消费方取
+  // 最近定义一致，非会话子树不消费该变量；上游是单一宽度轴设计，输入
+  // 卡/dock 卡自动跟随（narrow 档不写 = 上游 748 原生）
+  if (style.contentWidth !== 'narrow') {
+    sections.push(`[class*="_root"] { --dsh-chat-content-width: ${String(CONTENT_WIDTHS[style.contentWidth])}px; }`)
+  }
+
+  // ---- 深色主题：气泡与背景（900）对比拉开一档 ----
+  sections.push('body[data-ds-dark-theme] { --dsw-specific-bubble: var(--dsw-static-neutral-bluish-800); }')
+
+  return sections.join('\n\n')
 }
 
-/* ---- 代码块：圆角收敛（局部变量重定义，banner 顶角自动跟随）。
-   _block 是常见类名，泛匹配仅定义一个局部变量——非 CodeBlock 的
-   block 后代不消费 --dsl-code-block-border-radius，零视觉副作用 */
-[class*="_block"] { --dsl-code-block-border-radius: 10px; }
-
-/* ---- 消息列宽：960 → 1080。定义方（ConversationRoot 容器）与消费方
-   （ChatView/输入卡等）同用 _root 类名；泛匹配把 1080 广播到所有
-   root，消费方取最近定义一致为 1080，非会话子树不消费该变量，
-   上游是单一宽度轴设计，输入卡/dock 卡自动跟随 */
-[class*="_root"] {
-  --dsh-chat-content-width: 1080px;
-}
-
-/* ---- 深色主题：气泡与背景（900）对比拉开一档 ---- */
-body[data-ds-dark-theme] {
-  --dsw-specific-bubble: var(--dsw-static-neutral-bluish-800);
-}
-`
-
-/** 注入脚本（幂等：替换已存在的同 id 标签；SPA 内部导航不清 head）。 */
-const INJECT_JS = `(() => {
-  const css = ${JSON.stringify(OVERRIDE_CSS)}
+/**
+ * 立即（重新）注入当前档位的覆盖样式。偏好设置变更后由主进程调用，
+ * 不等下次整页加载；页面跳转间隙执行失败属正常，did-finish-load
+ * 会重试。脚本纯 JS（模板字符串内禁 TS 注解）且自幂等。
+ */
+export function refreshStyleOverlay(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const css = buildOverlayCss(getSettings().style)
+  const js = `(() => {
+  const css = ${JSON.stringify(css)}
   let el = document.getElementById('${STYLE_ID}')
+  if (css === '') {
+    if (el !== null) el.remove()
+    return
+  }
   if (el === null) {
     el = document.createElement('style')
     el.id = '${STYLE_ID}'
@@ -107,9 +185,13 @@ const INJECT_JS = `(() => {
   }
   if (el.textContent !== css) el.textContent = css
 })()`
+  win.webContents.executeJavaScript(js, true).catch(() => {
+    // 页面跳转间隙失败属正常
+  })
+}
 
 /**
- * 给 shell 窗口挂样式覆盖（每次整页加载后重新注入，脚本自幂等；
+ * 给 shell 窗口挂样式覆盖（每次整页加载后按最新设置重新注入；
  * 重复调用安全，窗口重建时旧监听随窗口销毁）。
  */
 export function attachStyleOverlay(win: BrowserWindow): void {
@@ -118,9 +200,7 @@ export function attachStyleOverlay(win: BrowserWindow): void {
   const { webContents } = win
   const onDidLoad = (): void => {
     if (win.isDestroyed()) return
-    webContents.executeJavaScript(INJECT_JS, true).catch(() => {
-      // 页面跳转间隙执行失败属正常，下次加载会重试
-    })
+    refreshStyleOverlay(win)
   }
   webContents.on('did-finish-load', onDidLoad)
   win.once('closed', () => {
