@@ -19,6 +19,8 @@ import { attachThemeWatcher, themeBackgroundColor } from './theme-watcher'
 import { attachStyleOverlay } from './style-overlay'
 import { attachStatsHover } from './stats-hover'
 import { attachPicker } from './attach-picker'
+import { attachSessionLogInjector } from './session-log-export'
+import { attachStyleSettingsInjector } from './style-settings'
 import { terminalPanel } from './terminal-panel'
 import { previewPanel } from './preview-panel'
 import { getSettings, saveSettings } from './store'
@@ -108,6 +110,12 @@ export function showShellWindow(dshUrl: string): void {
     // 附件选择器：drag-to-attachment 插件的模式切换按钮 → 点击改为
     // 打开原生文件对话框（真实路径经插件 fast path 直接入队）
     attachPicker(shellWindow)
+    // 会话日志导出：设置面板导航列注入「会话日志」行（fiber 探测当前
+    // 会话 → 上游 /api/session.export 下载；Electron 默认弹保存对话框）
+    attachSessionLogInjector(shellWindow)
+    // 样式设置：设置面板通用区注入密度/列宽方块行（console 通道写回，
+    // 偏好设置面板只留桌面特有项）
+    attachStyleSettingsInjector(shellWindow)
     // 内嵌终端面板：底部真实终端（pty + xterm），页面探针/按钮注入
     // （按钮宿主是自绘标题栏，仅 darwin）
     if (process.platform === 'darwin') terminalPanel.attach(shellWindow)
