@@ -31,6 +31,11 @@ mac:
     - dmg
     - zip
   icon: build/icon.png
+  # 产物名固定无空格（productName 带空格时：builder 写 latest-mac.yml
+  # 把空格换 "-"，GitHub 上传 asset 把空格换 "."，三方不一致 → 自动
+  # 更新下载 404；v0.1.1/v0.1.2 均中招，靠手改 yml 急救过）。
+  # zip/dmg 同名异扩展，无冲突
+  artifactName: DSH-Desktop-${version}-${arch}.${ext}
   minimumSystemVersion: '13.0'
   # 正式发布的包必须公证（未公证的 Developer ID 应用会被用户机器的
   # Gatekeeper 拦截）。凭据走 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
@@ -42,8 +47,12 @@ dmg:
 linux:
   target: [AppImage, deb]
   category: Development
+  # 同 mac：无空格产物名（deb 内部包名仍来自 name 字段，不受影响）
+  artifactName: DSH-Desktop-${version}.${ext}
 win:
   target: [nsis]
+  # 同 mac：无空格产物名（默认 " productName Setup " 带空格同样中招）
+  artifactName: DSH-Desktop-Setup-${version}.${ext}
 # 自动更新源：GitHub Releases（electron-updater 读取随包生成的 app-update.yml）
 publish:
   provider: github
